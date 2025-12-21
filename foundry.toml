@@ -1,0 +1,19 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+evm_version = "cancun"
+solc_version = "0.8.26"
+auto_detect_solc = false
+via_ir = false
+
+# Exclude patterns - Foundry will skip these files during compilation
+[profile.default.exclude]
+libs = [
+    "**/test/**",
+    "**/certora/**",
+    "**/scripts/**",
+    "**/erc4626-tests/**"
+]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
