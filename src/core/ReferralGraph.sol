@@ -141,8 +141,11 @@ contract ReferralGraph is IReferralGraph, Ownable {
         _;
     }
 
-    /// @inheritdoc IReferralGraph
-    function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle {
+    /// @notice Internal function to register a user with a referrer
+    /// @param user The user being registered
+    /// @param referrer The referrer address
+    /// @param groupId The group ID
+    function _register(address user, address referrer, bytes32 groupId) internal {
         if (user == address(0)) revert InvalidReferrer();
         if (_referrers[groupId][user] != address(0)) revert AlreadyRegistered();
         if (referrer == address(0) && _root != address(0)) revert InvalidReferrer();
@@ -172,6 +175,11 @@ contract ReferralGraph is IReferralGraph, Ownable {
         emit UserRegistered(user, referrer);
     }
 
+    /// @inheritdoc IReferralGraph
+    function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle {
+        _register(user, referrer, groupId);
+    }
+
 
     /// @notice Batch register multiple users with the same referrer in a group
     /// @param users Array of users to register
@@ -179,7 +187,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @param groupId The group ID
     function batchRegister(address[] calldata users, address referrer, bytes32 groupId) external onlyAuthorizedOracle {
         for (uint256 i = 0; i < users.length; i++) {
-            this.register(users[i], referrer, groupId);
+            _register(users[i], referrer, groupId);
         }
     }
 

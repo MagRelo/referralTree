@@ -22,7 +22,7 @@ contract MockReferralGraph is IReferralGraph {
         _referrers[user] = referrer;
     }
 
-    function getReferrer(address user, bytes32 groupId) external view returns (address) {
+    function getReferrer(address user, bytes32 /* groupId */) external view returns (address) {
         return _referrers[user]; // Mock ignores group for simplicity
     }
 
@@ -70,7 +70,7 @@ contract MockReferralGraph is IReferralGraph {
         return result;
     }
 
-    function getChildren(address referrer, bytes32 groupId) external view returns (address[] memory) {
+    function getChildren(address referrer, bytes32 /* groupId */) external view returns (address[] memory) {
         return _children[referrer]; // Mock ignores group for simplicity
     }
 
@@ -79,7 +79,7 @@ contract MockReferralGraph is IReferralGraph {
         _referrers[user] = referrer;
     }
 
-    function register(address user, address referrer, bytes32 groupId) external {
+    function register(address user, address referrer, bytes32 /* groupId */) external {
         _referrers[user] = referrer; // Mock ignores group for simplicity
     }
 
@@ -103,7 +103,7 @@ contract MockReferralGraph is IReferralGraph {
         return _referrers[user] == referrer;
     }
 
-    function isRegistered(address user, bytes32 groupId) external view returns (bool) {
+    function isRegistered(address user, bytes32 /* groupId */) external view returns (bool) {
         return _referrers[user] != address(0); // Mock ignores group for simplicity
     }
 
@@ -149,7 +149,7 @@ contract MockReferralGraph is IReferralGraph {
     }
 
 
-    function getAncestors(address user, bytes32 groupId, uint256 maxLevels) external view returns (address[] memory) {
+    function getAncestors(address /* user */, bytes32 /* groupId */, uint256 /* maxLevels */) external pure returns (address[] memory) {
         // Simplified mock implementation
         return new address[](0);
     }
@@ -184,7 +184,7 @@ contract MockReferralGraph is IReferralGraph {
         }
     }
 
-    function isAuthorizedOracle(address oracle) external view returns (bool) {
+    function isAuthorizedOracle(address /* oracle */) external pure returns (bool) {
         // In mock, allow any caller (for testing simplicity)
         return true;
     }
