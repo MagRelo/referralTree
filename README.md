@@ -1,4 +1,4 @@
-# Query Incentive Network Referral System
+# Multi-Level Referral Reward System
 
 ## Overview
 
