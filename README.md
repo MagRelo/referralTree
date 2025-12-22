@@ -114,8 +114,8 @@ rewardDistributor.distributeChainRewards(reward, signature);
 **1. Deploy Contracts**
 
 ```bash
-# Deploy shared referral graph
-forge create src/core/ReferralGraph.sol:ReferralGraph --constructor-args <owner> <root> <allowlist>
+# Deploy shared referral graph (with optional initial oracle)
+forge create src/core/ReferralGraph.sol:ReferralGraph --constructor-args <owner> <root> <allowlist> <initialOracle>
 
 # Deploy shared reward distributor
 forge create src/core/RewardDistributor.sol:RewardDistributor --constructor-args <owner> <referralGraph> <initialOracle>
@@ -123,15 +123,21 @@ forge create src/core/RewardDistributor.sol:RewardDistributor --constructor-args
 
 **2. Authorize Project Oracles**
 
-Authorize oracles for different projects:
+**Important:** Registration of referrals is restricted to authorized oracles only. You must authorize oracles in both contracts:
 
 ```solidity
-// Authorize Project A's oracle
+// Authorize Project A's oracle in ReferralGraph (for registration)
+referralGraph.authorizeOracle(projectAOracle);
+
+// Authorize Project A's oracle in RewardDistributor (for reward distribution)
 rewardDistributor.authorizeOracle(projectAOracle);
 
 // Authorize Project B's oracle
+referralGraph.authorizeOracle(projectBOracle);
 rewardDistributor.authorizeOracle(projectBOracle);
 ```
+
+**Note:** Typically, you'll authorize the same oracles in both contracts for consistency.
 
 **3. Configure Reward Distribution**
 
@@ -151,8 +157,15 @@ rewardDistributor.setOriginalUserPercentage(8000);
 
 #### Referral Management
 
-- `register(address user, address referrer, bytes32 groupId)` - Register referral in group (group auto-created on first registration)
-- `batchRegister(address[] users, address referrer, bytes32 groupId)` - Batch register users
+- `register(address user, address referrer, bytes32 groupId)` - Register referral in group (oracle-only, group auto-created on first registration)
+- `batchRegister(address[] users, address referrer, bytes32 groupId)` - Batch register users (oracle-only)
+
+#### Oracle Management
+
+- `authorizeOracle(address oracle)` - Authorize an oracle to register referrals (owner only)
+- `unauthorizeOracle(address oracle)` - Remove oracle authorization (owner only)
+- `isAuthorizedOracle(address oracle)` - Check if an address is an authorized oracle
+- `getAuthorizedOracles()` - Get all authorized oracles
 - `getReferrer(address user, bytes32 groupId)` - Get referrer in group
 - `getChildren(address referrer, bytes32 groupId)` - Get referrals in group
 - `getAncestors(address user, bytes32 groupId, uint256 maxLevels)` - Get referral chain

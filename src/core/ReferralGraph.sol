@@ -25,16 +25,24 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @notice Root address for the system (can be address(0) for no root)
     address private _root;
 
+    /// @notice Authorized oracle addresses that can register referrals
+    mapping(address => bool) private _authorizedOracles;
+
+    /// @notice List of authorized oracles for enumeration
+    address[] private _authorizedOraclesList;
+
     /**
      * @notice Constructor
      * @param initialOwner The initial owner of the contract
      * @param root The root address for the referral tree
      * @param allowlistEnabled Whether to enable referrer allowlist
+     * @param initialOracle Initial oracle address to authorize (optional, can be address(0))
      */
     constructor(
         address initialOwner,
         address root,
-        bool allowlistEnabled
+        bool allowlistEnabled,
+        address initialOracle
     ) Ownable(initialOwner) {
         _root = root;
         _allowlistEnabled = allowlistEnabled;
@@ -42,6 +50,13 @@ contract ReferralGraph is IReferralGraph, Ownable {
         // If root is set, mark it as allowed
         if (root != address(0)) {
             _allowedReferrers[root] = true;
+        }
+
+        // If initial oracle is set, authorize it
+        if (initialOracle != address(0)) {
+            _authorizedOracles[initialOracle] = true;
+            _authorizedOraclesList.push(initialOracle);
+            emit OracleAuthorized(initialOracle);
         }
     }
 
@@ -118,8 +133,16 @@ contract ReferralGraph is IReferralGraph, Ownable {
         return _referrers[groupId][user] != address(0) || _children[groupId][user].length > 0;
     }
 
+    /// @notice Modifier to restrict functions to authorized oracles only
+    modifier onlyAuthorizedOracle() {
+        if (!_authorizedOracles[msg.sender]) {
+            revert UnauthorizedOracle();
+        }
+        _;
+    }
+
     /// @inheritdoc IReferralGraph
-    function register(address user, address referrer, bytes32 groupId) external {
+    function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle {
         if (user == address(0)) revert InvalidReferrer();
         if (_referrers[groupId][user] != address(0)) revert AlreadyRegistered();
         if (referrer == address(0) && _root != address(0)) revert InvalidReferrer();
@@ -154,7 +177,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @param users Array of users to register
     /// @param referrer The referrer for all users
     /// @param groupId The group ID
-    function batchRegister(address[] calldata users, address referrer, bytes32 groupId) external {
+    function batchRegister(address[] calldata users, address referrer, bytes32 groupId) external onlyAuthorizedOracle {
         for (uint256 i = 0; i < users.length; i++) {
             this.register(users[i], referrer, groupId);
         }
@@ -207,6 +230,44 @@ contract ReferralGraph is IReferralGraph, Ownable {
      */
     function getRoot() external view returns (address) {
         return _root;
+    }
+
+    /// @inheritdoc IReferralGraph
+    function authorizeOracle(address oracle) external onlyOwner {
+        if (oracle == address(0)) revert InvalidReferrer();
+        if (!_authorizedOracles[oracle]) {
+            _authorizedOracles[oracle] = true;
+            _authorizedOraclesList.push(oracle);
+            emit OracleAuthorized(oracle);
+        }
+    }
+
+    /// @inheritdoc IReferralGraph
+    function unauthorizeOracle(address oracle) external onlyOwner {
+        if (_authorizedOracles[oracle]) {
+            _authorizedOracles[oracle] = false;
+
+            // Remove from list
+            for (uint256 i = 0; i < _authorizedOraclesList.length; i++) {
+                if (_authorizedOraclesList[i] == oracle) {
+                    _authorizedOraclesList[i] = _authorizedOraclesList[_authorizedOraclesList.length - 1];
+                    _authorizedOraclesList.pop();
+                    break;
+                }
+            }
+
+            emit OracleUnauthorized(oracle);
+        }
+    }
+
+    /// @inheritdoc IReferralGraph
+    function isAuthorizedOracle(address oracle) external view returns (bool) {
+        return _authorizedOracles[oracle];
+    }
+
+    /// @inheritdoc IReferralGraph
+    function getAuthorizedOracles() external view returns (address[] memory) {
+        return _authorizedOraclesList;
     }
 }
 

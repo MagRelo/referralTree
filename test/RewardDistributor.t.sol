@@ -95,13 +95,10 @@ contract RewardDistributorTest is Test {
         uint256 timestamp = block.timestamp;
         uint256 nonce = 1;
 
-        // Set up referral chain (groups auto-created on registration)
-        vm.prank(owner);
-        referralGraph.register(user1, root, testGroup);
-        vm.prank(owner);
-        referralGraph.register(user2, user1, testGroup);
-        vm.prank(owner);
-        referralGraph.register(user3, user2, testGroup);
+        // Set up referral chain using mock's setReferrer (bypasses oracle check)
+        referralGraph.setReferrer(user1, root);
+        referralGraph.setReferrer(user2, user1);
+        referralGraph.setReferrer(user3, user2);
 
         IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
             user: user3, // user3 -> user2 -> user1

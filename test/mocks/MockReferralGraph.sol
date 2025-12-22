@@ -9,9 +9,13 @@ contract MockReferralGraph is IReferralGraph {
     mapping(address => bool) private _allowedReferrers;
     bool private _allowlistEnabled;
     address private _root;
+    mapping(address => bool) private _authorizedOracles;
+    address[] private _authorizedOraclesList;
 
     constructor(address root) {
         _root = root;
+        // In mock, authorize address(0) as default oracle to allow any caller
+        _authorizedOracles[address(0)] = true;
     }
 
     function setReferrer(address user, address referrer) external {
@@ -156,5 +160,36 @@ contract MockReferralGraph is IReferralGraph {
 
     function getRoot() external view returns (address) {
         return _root;
+    }
+
+    function authorizeOracle(address oracle) external {
+        if (!_authorizedOracles[oracle]) {
+            _authorizedOracles[oracle] = true;
+            _authorizedOraclesList.push(oracle);
+            emit OracleAuthorized(oracle);
+        }
+    }
+
+    function unauthorizeOracle(address oracle) external {
+        if (_authorizedOracles[oracle]) {
+            _authorizedOracles[oracle] = false;
+            for (uint256 i = 0; i < _authorizedOraclesList.length; i++) {
+                if (_authorizedOraclesList[i] == oracle) {
+                    _authorizedOraclesList[i] = _authorizedOraclesList[_authorizedOraclesList.length - 1];
+                    _authorizedOraclesList.pop();
+                    break;
+                }
+            }
+            emit OracleUnauthorized(oracle);
+        }
+    }
+
+    function isAuthorizedOracle(address oracle) external view returns (bool) {
+        // In mock, allow any caller (for testing simplicity)
+        return true;
+    }
+
+    function getAuthorizedOracles() external view returns (address[] memory) {
+        return _authorizedOraclesList;
     }
 }

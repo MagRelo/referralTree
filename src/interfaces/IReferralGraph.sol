@@ -15,6 +15,12 @@ interface IReferralGraph {
     /// @notice Emitted when a referrer is removed from the allowlist
     event ReferrerDisallowed(address indexed referrer);
 
+    /// @notice Emitted when an oracle is authorized
+    event OracleAuthorized(address indexed oracle);
+
+    /// @notice Emitted when an oracle is unauthorized
+    event OracleUnauthorized(address indexed oracle);
+
     /// @notice Error when trying to register with invalid referrer
     error InvalidReferrer();
 
@@ -26,6 +32,9 @@ interface IReferralGraph {
 
     /// @notice Error when referrer is not in allowlist (if allowlist is enabled)
     error ReferrerNotAllowed();
+
+    /// @notice Error when caller is not an authorized oracle
+    error UnauthorizedOracle();
 
     /// @notice Get the referrer of a user in a group
     /// @param user The user to query
@@ -89,5 +98,22 @@ interface IReferralGraph {
     /// @notice Get the root address
     /// @return The root address
     function getRoot() external view returns (address);
+
+    /// @notice Authorize an oracle to register referrals
+    /// @param oracle The oracle address to authorize
+    function authorizeOracle(address oracle) external;
+
+    /// @notice Unauthorize an oracle
+    /// @param oracle The oracle address to unauthorize
+    function unauthorizeOracle(address oracle) external;
+
+    /// @notice Check if an address is an authorized oracle
+    /// @param oracle The address to check
+    /// @return True if authorized
+    function isAuthorizedOracle(address oracle) external view returns (bool);
+
+    /// @notice Get all authorized oracles
+    /// @return Array of authorized oracle addresses
+    function getAuthorizedOracles() external view returns (address[] memory);
 }
 
