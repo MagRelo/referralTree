@@ -30,6 +30,27 @@ Referral Tree:           Reward Distribution:
 
 **The reward pool flows upward** through the referral tree, with each level receiving a mathematically decreasing portion.
 
+### Exponential Network Growth
+
+In reality, each user refers multiple people, creating exponential growth. Here's a full referral tree showing how Alice can earn from dozens of users:
+
+```
+Referral Tree (each person refers multiple users):
+
+          Alice (earns from ALL below)
+        /   |   \
+       /    |    \
+      ▼     ▼     ▼
+     Bob   Charlie Diana
+    / \     │     │
+   ▼   ▼    ▼     ▼
+  Eve Fred Gina   Hal
+   │   │    │     │
+   └───┴────┴─────┘ (and many more...)
+```
+
+**Exponential Growth:** If each user refers just 3 others, Alice could eventually earn referral income from hundreds of users in her network. Each person below Alice (Bob, Charlie, Diana) refers their own users, who then refer more users, creating a cascading effect where early adopters like Alice benefit from exponential network growth.
+
 ### Example: Oracle grants 1000 tokens
 
 | Level    | User   | Amount | Cumulative |
