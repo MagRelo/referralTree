@@ -284,4 +284,114 @@ contract ReferralGraphTest is Test {
         newGraph.register(user1, root, testGroup);
         assertTrue(newGraph.isRegistered(user1, testGroup));
     }
+
+    // ============ FUZZ TESTS ============
+
+    /// @notice Fuzz test: Register user with random valid addresses
+    function testFuzz_RegisterWithRandomAddresses(address user, address referrer, bytes32 groupId) public {
+        // Filter out invalid addresses
+        vm.assume(user != address(0));
+        vm.assume(referrer != address(0));
+        vm.assume(user != referrer);
+        vm.assume(user != root);
+        vm.assume(referrer != root);
+        
+        // First register the referrer with root
+        vm.prank(oracle);
+        referralGraph.register(referrer, root, groupId);
+        
+        // Now register user with referrer
+        vm.prank(oracle);
+        referralGraph.register(user, referrer, groupId);
+        
+        // Verify registration
+        assertTrue(referralGraph.isRegistered(user, groupId));
+        assertEq(referralGraph.getReferrer(user, groupId), referrer);
+        
+        // Verify referrer's children includes user
+        address[] memory children = referralGraph.getChildren(referrer, groupId);
+        bool found = false;
+        for (uint256 i = 0; i < children.length; i++) {
+            if (children[i] == user) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found);
+    }
+
+    /// @notice Fuzz test: Batch register with random addresses
+    function testFuzz_BatchRegisterRandomUsers(uint8 numUsers, bytes32 groupId) public {
+        // Limit to reasonable number to avoid gas issues
+        vm.assume(numUsers > 0 && numUsers <= 50);
+        
+        // Generate unique addresses
+        address[] memory users = new address[](numUsers);
+        for (uint256 i = 0; i < numUsers; i++) {
+            // Generate deterministic but unique addresses
+            users[i] = address(uint160(uint256(keccak256(abi.encodePacked(groupId, i)))));
+            vm.assume(users[i] != address(0));
+            vm.assume(users[i] != root);
+        }
+        
+        // Register all users with root
+        vm.prank(oracle);
+        referralGraph.batchRegister(users, root, groupId);
+        
+        // Verify all users are registered
+        for (uint256 i = 0; i < numUsers; i++) {
+            assertTrue(referralGraph.isRegistered(users[i], groupId));
+            assertEq(referralGraph.getReferrer(users[i], groupId), root);
+        }
+        
+        // Verify root has all users as children
+        address[] memory children = referralGraph.getChildren(root, groupId);
+        assertEq(children.length, numUsers);
+    }
+
+    /// @notice Fuzz test: Get ancestors with random depth
+    function testFuzz_GetAncestorsRandomDepth(uint8 depth, bytes32 groupId) public {
+        vm.assume(depth > 0 && depth <= 20);
+        
+        // Build a chain of the specified depth
+        address[] memory chain = new address[](depth + 1);
+        chain[0] = root;
+        
+        for (uint256 i = 1; i <= depth; i++) {
+            chain[i] = address(uint160(uint256(keccak256(abi.encodePacked(groupId, i)))));
+            vm.assume(chain[i] != address(0));
+            
+            // Register this user with previous user as referrer
+            vm.prank(oracle);
+            referralGraph.register(chain[i], chain[i - 1], groupId);
+        }
+        
+        // Get ancestors for the last user
+        address[] memory ancestors = referralGraph.getAncestors(chain[depth], groupId, depth + 10);
+        
+        // Verify ancestors match expected chain (in reverse)
+        assertEq(ancestors.length, depth);
+        for (uint256 i = 0; i < depth; i++) {
+            assertEq(ancestors[i], chain[depth - i]);
+        }
+    }
+
+    /// @notice Fuzz test: Cannot register with invalid addresses
+    function testFuzz_CannotRegisterWithInvalidAddresses(address user, address referrer, bytes32 groupId) public {
+        // Test that zero addresses are rejected
+        if (user == address(0) || referrer == address(0)) {
+            vm.prank(oracle);
+            vm.expectRevert();
+            referralGraph.register(user, referrer, groupId);
+            return;
+        }
+        
+        // Test that self-referral is rejected
+        if (user == referrer) {
+            vm.prank(oracle);
+            vm.expectRevert(IReferralGraph.InvalidReferrer.selector);
+            referralGraph.register(user, referrer, groupId);
+            return;
+        }
+    }
 }

@@ -5,7 +5,23 @@ libs = ["lib"]
 evm_version = "cancun"
 solc_version = "0.8.26"
 auto_detect_solc = false
-via_ir = false
+via_ir = true
+
+# Fuzzing configuration
+# Runs: Number of test cases to generate per fuzz test
+# Max test rejects: Maximum number of inputs to reject before giving up
+[profile.default.fuzz]
+runs = 256
+max_test_rejects = 65536
+
+# Invariant testing configuration
+# Runs: Number of test sequences to run
+# Depth: Maximum number of calls to make in a sequence
+# Fail on revert: Whether to fail if a call reverts
+[profile.default.invariant]
+runs = 256
+depth = 15
+fail_on_revert = false
 
 # Exclude patterns - Foundry will skip these files during compilation
 [profile.default.exclude]
