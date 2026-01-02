@@ -9,6 +9,31 @@ import mesa
 import networkx as nx
 import numpy as np
 from mesa.datacollection import DataCollector
+from dataclasses import dataclass
+from typing import List, Tuple, Dict
+import hashlib
+from enum import Enum
+
+
+class DecayType(Enum):
+    """Reward decay types matching the smart contract"""
+    LINEAR = "linear"
+    EXPONENTIAL = "exponential"
+    FIXED = "fixed"
+
+
+@dataclass
+class RewardEvent:
+    """Represents a reward-triggering event in the simulation"""
+    user_id: int
+    total_amount: float  # Base amount for reward calculations
+    event_type: str     # "purchase", "milestone", "achievement"
+    timestamp: int
+
+    def __post_init__(self):
+        # Create unique event ID
+        event_string = f"{self.user_id}_{self.total_amount}_{self.event_type}_{self.timestamp}"
+        self.event_id = hashlib.md5(event_string.encode()).hexdigest()
 
 
 class UserAgent(mesa.Agent):
@@ -28,11 +53,13 @@ class UserAgent(mesa.Agent):
     def __init__(self, model, referrer_id=None):
         super().__init__(model)
         self.referral_count = 0
-        self.total_rewards = 0
+        self.total_rewards = 0.0
+        self.pending_rewards = 0.0  # Rewards earned but not yet distributed
         self.referral_level = 0
         self.referrer_id = referrer_id
         self.active = True
         self.join_time = model.current_step
+        self.last_reward_time = model.current_step
 
         # Calculate referral level
         if referrer_id is not None:
@@ -116,10 +143,15 @@ class ReferralModel(mesa.Model):
         self.current_step = 0
 
         # Reward parameters
-        self.reward_decay_type = reward_decay_type
+        self.reward_decay_type = DecayType(reward_decay_type) if isinstance(reward_decay_type, str) else reward_decay_type
         self.reward_decay_factor = reward_decay_factor
         self.min_reward = min_reward
         self.original_user_percentage = original_user_percentage
+
+        # Reward event tracking
+        self.reward_events = []
+        self.total_rewards_distributed = 0.0
+        self.reward_distribution_count = 0
 
         # Initialize network
         self.network = nx.DiGraph()
@@ -140,15 +172,167 @@ class ReferralModel(mesa.Model):
             "Average Path Length": lambda m: (nx.average_shortest_path_length(m.network.to_undirected())
                                            if nx.is_connected(m.network.to_undirected()) and len(m.network.nodes()) > 1
                                            else 0),
+            "Total Rewards Distributed": lambda m: m.total_rewards_distributed,
+            "Average Rewards per User": lambda m: (sum(a.total_rewards for a in m.agents) / len(m.agents)) if len(m.agents) > 0 else 0,
+            "Reward Events": lambda m: len(m.reward_events),
         })
 
     def step(self):
         """Advance the model by one step"""
         self.current_step += 1
         self.datacollector.collect(self)
+
         # In Mesa 2.x, we iterate through agents manually
         for agent in list(self.agents):
             agent.step()
+
+        # Generate reward events (simulate user activities)
+        self._generate_reward_events()
+
+    def _generate_reward_events(self):
+        """Generate reward events based on active user behavior"""
+        active_users = [a for a in self.agents if a.active]
+
+        if not active_users:
+            return
+
+        # Probability of an event per active user per step
+        event_probability = 0.02  # 2% chance per user per step
+
+        for user in active_users:
+            if np.random.random() < event_probability:
+                # Generate reward amount (log-normal distribution for realistic rewards)
+                reward_amount = np.random.lognormal(mean=2.0, sigma=1.0)  # Mean ~$7.39
+
+                # Create reward event
+                event = RewardEvent(
+                    user_id=user.unique_id,
+                    total_amount=reward_amount,
+                    event_type="purchase",  # Could be randomized later
+                    timestamp=self.current_step
+                )
+
+                # Distribute rewards
+                self._distribute_chain_rewards(event)
+
+    def _distribute_chain_rewards(self, event: RewardEvent):
+        """Distribute rewards across the referral chain (matches contract logic)"""
+        # Get referral chain for the user
+        chain = self._get_referral_chain(event.user_id)
+
+        if not chain:
+            return
+
+        # Calculate reward distribution
+        recipients, amounts = self._calculate_chain_rewards(event.total_amount, chain)
+
+        # Distribute rewards to recipients
+        total_distributed = 0.0
+        for recipient_id, amount in zip(recipients, amounts):
+            if amount > 0:
+                # Find the agent and add rewards
+                for agent in self.agents:
+                    if agent.unique_id == recipient_id:
+                        agent.total_rewards += amount
+                        agent.last_reward_time = self.current_step
+                        total_distributed += amount
+                        break
+
+        # Track event
+        self.reward_events.append(event)
+        self.total_rewards_distributed += total_distributed
+        self.reward_distribution_count += 1
+
+    def _get_referral_chain(self, user_id: int) -> List[int]:
+        """Get the referral chain from user up to root (matches contract logic)"""
+        chain = []
+        current_id = user_id
+        visited = set()
+
+        # Traverse up the referral chain (avoid cycles)
+        while current_id is not None and current_id not in visited:
+            visited.add(current_id)
+            chain.append(current_id)
+
+            # Find referrer
+            current_id = None
+            for agent in self.agents:
+                if agent.unique_id == chain[-1]:
+                    current_id = agent.referrer_id
+                    break
+
+            # Limit chain depth to prevent infinite loops
+            if len(chain) > 50:
+                break
+
+        return chain
+
+    def _calculate_chain_rewards(self, total_amount: float, chain: List[int]) -> Tuple[List[int], List[float]]:
+        """Calculate reward distribution across chain (matches contract _calculateChainRewards)"""
+        if not chain:
+            return [], []
+
+        # Original user gets their percentage
+        original_user_reward = (total_amount * self.original_user_percentage) / 10000
+        remaining_for_chain = total_amount - original_user_reward
+
+        recipients = [chain[0]]  # Original user
+        amounts = [original_user_reward]
+
+        # Calculate rewards for referral chain (excluding original user)
+        num_referrers = len(chain) - 1  # chain[0] is original user
+        remaining_to_distribute = remaining_for_chain
+
+        for i in range(num_referrers):
+            if remaining_to_distribute < self.min_reward:
+                break  # Not enough left to distribute
+
+            # Calculate level reward based on decay type
+            level_reward = self._calculate_level_reward(remaining_to_distribute, i + 1)
+
+            # Ensure minimum reward and don't exceed remaining
+            if level_reward < self.min_reward:
+                level_reward = min(remaining_to_distribute, self.min_reward) if remaining_to_distribute >= self.min_reward else 0
+
+            if level_reward > 0 and level_reward <= remaining_to_distribute:
+                recipients.append(chain[i + 1])
+                amounts.append(level_reward)
+                remaining_to_distribute -= level_reward
+            else:
+                break
+
+        # Any remaining goes to "dust" (could be oracle/platform in real system)
+        if remaining_to_distribute > 0:
+            # For simulation, we could add a platform fee recipient
+            # For now, we'll just track it as distributed
+            pass
+
+        return recipients, amounts
+
+    def _calculate_level_reward(self, base_amount: float, level: int) -> float:
+        """Calculate reward for a specific level using the configured decay function"""
+        if self.reward_decay_type == DecayType.LINEAR:
+            # Linear decay: reward = max(minReward, baseAmount * (1 - decayRate * level))
+            decay_amount = (base_amount * self.reward_decay_factor * level) / 10000
+            if decay_amount >= base_amount:
+                return self.min_reward
+            reward = base_amount - decay_amount
+            return max(reward, self.min_reward)
+
+        elif self.reward_decay_type == DecayType.EXPONENTIAL:
+            # Exponential decay: each level gets decayFactor% of the previous level's reward
+            reward = base_amount
+            for i in range(level):
+                reward = (reward * self.reward_decay_factor) / 10000
+                if reward < self.min_reward:
+                    return self.min_reward
+            return reward
+
+        elif self.reward_decay_type == DecayType.FIXED:
+            # Fixed amount per level
+            return max(self.reward_decay_factor, self.min_reward)
+
+        return self.min_reward  # Fallback
 
 
 def run_simulation(model_params, max_steps=100, n_runs=1):

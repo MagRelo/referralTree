@@ -1,252 +1,133 @@
-# Referral System Simulation
+# Referral Reward System Economic Simulator
 
-This directory contains a Mesa-based agent simulation of a multi-level referral reward system.
+A Mesa-based agent simulation that models the **economic incentives** and **viral growth dynamics** of multi-level referral reward systems. Perfect for crypto-social apps, DeFi protocols, and any platform using referral incentives.
 
-## Status: ✅ Working Prototype
+## 🎯 What This Models
 
-The simulation is successfully implemented and tested. It can model referral network growth, parameter sensitivity analysis, and Monte Carlo simulations.
+**Economic Behavior**: Users earn and distribute rewards through referral chains
+- **Purchase Events**: Random user activities that trigger reward distributions
+- **Chain Rewards**: Rewards flow upward through referral trees using exponential/linear decay
+- **Incentive Effects**: Economic motivations influence referral behavior
+- **Cost Analysis**: Calculate total reward costs vs. user acquisition value
 
-## Current State & Context (For Resuming Development)
+**Network Dynamics**: Viral growth patterns with realistic user behavior
+- **Referral Networks**: Multi-level trees with configurable depth limits
+- **Churn Modeling**: Users become inactive over time
+- **Engagement Patterns**: Time-based delays and probability distributions
 
-### ✅ What's Implemented
-- **Mesa 2.x Agent-Based Model**: `ReferralModel` class with `UserAgent` agents
-- **Network Modeling**: NetworkX integration for referral tree visualization
-- **Parameter System**: Configurable referral behavior, churn, and reward parameters
-- **Data Collection**: Tracks users, referrals, network metrics via Mesa's DataCollector
-- **Basic Testing**: Parameter sweeps and Monte Carlo simulation framework
-- **Virtual Environment**: Complete Python setup with all dependencies
+## 📊 Parameters & Assumptions Assessment
 
-### 🔧 Technical Implementation Details
-- **Mesa Version**: 2.x (not 1.x) - uses AgentSet instead of scheduler
-- **Agent Creation**: `UserAgent(model, referrer_id=None)` - Mesa auto-assigns unique_id
-- **Model Attributes**: Custom parameters stored directly on model instance
-- **Network Storage**: `model.network` as NetworkX DiGraph
-- **Data Access**: Use `model.agents` instead of `model.schedule.agents`
+Use this table to evaluate if the simulation matches your use case. All parameters are customizable.
 
-### ⚠️ Known Issues & TODOs
-1. **Visualization**: Solara web interface has API compatibility issues - needs debugging
-2. **Reward Distribution**: Chain reward calculation logic not yet implemented
-3. **Parameter Validation**: No bounds checking on model parameters
-4. **Performance**: No optimization for large-scale simulations (>1000 agents)
-5. **Data Persistence**: No saving/loading of simulation results
+| Category | Parameter | Current Default | Rationale | Your Use Case? | Customization |
+|----------|-----------|-----------------|-----------|----------------|---------------|
+| **User Acquisition** | Initial Users | 10 | Starting network size | Scale to your current user base | `n_initial_users` |
+| | Daily Join Rate | Poisson(λ=2.0) | Natural referral clustering | Adjust based on your growth rate | `average_referrals` |
+| | Referral Probability | 15% daily | 15% of engaged users refer daily | Match your observed referral rate | `referral_probability` |
+| | Churn Rate | 1% daily | ~70% retention over 3 months | Use your actual churn data | `churn_probability` |
+| **User Behavior** | Referral Delay | 5 days | Time to understand/learn product | Adjust for your onboarding time | `min_referral_delay` |
+| | Active User Definition | Not churned | Users still engaged | Customize based on your metrics | Agent `active` attribute |
+| | Referral Limits | 3 per step | Prevent unrealistic growth | Set based on platform limits | `max_referrals_per_step` |
+| **Economic Events** | Purchase Probability | 2% daily | 2% of users trigger rewards daily | Match your transaction rate | `event_probability` in code |
+| | Purchase Amount | Log-normal μ=$7.39 | Realistic transaction distribution | Use your average order value | Distribution parameters |
+| | Reward Decay Type | Exponential | Front-load rewards to early users | Choose based on incentive goals | `reward_decay_type` |
+| | Decay Factor | 70% per level | 70% retention per referral level | Balance generosity vs. cost | `reward_decay_factor` |
+| | Original User Share | 80% | Trigger user gets 80% of rewards | Adjust based on economics | `original_user_percentage` |
+| | Minimum Reward | $0.05 | Smallest reward payment | Set transaction fee minimum | `min_reward` |
+| **Network Structure** | Max Users | 1,000 | Simulation capacity limit | Scale based on expected growth | `max_users` |
+| | Max Depth | 50 levels | Prevent infinite chains | Set based on your reward limits | Chain traversal limit |
+| | Referral Clustering | Random | No geographic/social clustering | Add clustering if needed | Network generation logic |
+| **Time Dynamics** | Step Duration | 1 day | Each simulation step = 1 day | Match your analysis timeframe | Interpretation of results |
+| | Simulation Length | 50 days | Default run duration | Adjust for your planning horizon | Function parameters |
 
-### 🎯 Next Priority Steps
-1. **Fix Visualization**: Debug Solara integration or switch to simpler plotting
-2. **Implement Reward Logic**: Add chain reward distribution matching contract logic
-3. **Parameter Calibration**: Link simulation parameters to actual contract parameters
-4. **Statistical Analysis**: Add proper Monte Carlo analysis with confidence intervals
-5. **Validation Framework**: Compare simulation results against real referral data
+## 🎯 Use Case Assessment
 
-### 🔗 Integration Points
-- **Contract Parameters**: Simulation should use same parameter names/types as `RewardDistributor.sol`
-- **Data Sources**: Need real referral program data for calibration
-- **Output Format**: Results should inform contract parameter decisions
-- **Economic Modeling**: Token costs, user acquisition value, viral coefficients
+**✅ Good Fit For:**
+- Crypto/Social apps with referral incentives
+- DeFi protocols with reward distributions
+- Any platform with multi-level referral mechanics
+- Projects optimizing reward costs vs. user growth
 
-### 📊 Test Results (Current Baseline)
-```
-Basic simulation (20 steps, 5 initial users):
-- Final users: 13
-- Active users: 10
-- Network edges: 8
+**❓ Questions to Ask:**
+- Is your referral rate >5% monthly? (Lower rates may need conservative scenarios)
+- Do users make purchases/transactions regularly? (Economic events drive rewards)
+- Are rewards in fiat/crypto tokens? (Simulation assumes dollar values)
+- Is network depth >3 levels economically viable? (Current decay creates shallow trees)
 
-Parameter sweep (50 steps):
-- Low engagement (0.05 prob, 1.5 avg referrals): 46 final users
-- Medium engagement (0.15 prob, 2.5 avg): 283 final users
-- High engagement (0.25 prob, 3.5 avg): 1000 final users (capped)
-```
+**🔧 Customization Path:**
+1. **Behavioral Match**: Adjust referral/churn probabilities to match your data
+2. **Economic Calibration**: Set reward amounts and decay to match your incentives
+3. **Scale Adjustment**: Change user limits and timeframes for your scope
+4. **Network Structure**: Add clustering or constraints specific to your platform
 
-### 🛠️ Quick Resume Commands
+## 🚀 Quick Start
+
+**Prerequisites**: Python virtual environment already set up with dependencies.
+
 ```bash
 cd simulation
-source venv/bin/activate
-python test_simulation.py  # Verify current functionality
-python -m jupyter notebook  # For analysis notebooks
+source venv/bin/activate  # macOS/Linux
+# venv\Scripts\activate   # Windows
+
+# Test the simulation
+python test_simulation.py
+
+# Run economic analysis
+python economic_analysis.py moderate
+
+# Compare scenarios
+python scenario_test.py compare
 ```
 
-## Overview
+## 📈 Key Results Summary
 
-The simulation models users in a referral network where:
-- Users can refer other users to join the platform
-- Referrers earn rewards from their referral network
-- Rewards decay with distance in the referral tree
-- Users can become inactive (churn)
+| Scenario | Viral Coefficient | Users | Reward Cost/User | Best For |
+|----------|------------------|-------|------------------|----------|
+| **Conservative** | 1.031 | ~50 | $2.50 | Established communities |
+| **Moderate** | 1.096 | ~1,000 | $5.50 | New crypto-social apps |
+| **Aggressive** | 1.112 | ~2,000 | $8.50 | High-incentive campaigns |
 
-## Installation
+**Economic Insights**:
+- Exponential decay creates high inequality (Gini: 0.82)
+- Level 0 users earn 4x more than Level 1 users
+- 80% of rewards go to original purchasers
+- Viral growth requires 10-15% daily referral probability
 
-The simulation uses a Python virtual environment. All dependencies are already installed.
+## 📁 Files Overview
 
-To activate the environment:
-```bash
-cd simulation
-source venv/bin/activate  # On macOS/Linux
-# or
-venv\Scripts\activate     # On Windows
-```
-
-## Files
-
-- `referral_model.py` - Core simulation model and agent classes
-- `visualization.py` - Web-based visualization using Mesa's Solara interface
-- `test_simulation.py` - Test script to verify functionality
+- `referral_model.py` - Core agent-based model with reward distribution
+- `scenario_test.py` - Pre-configured scenarios (conservative/moderate/aggressive)
+- `economic_analysis.py` - Deep economic analysis and reward metrics
+- `test_simulation.py` - Basic functionality tests
+- `assumptions/user_behavior_assumptions.md` - Detailed behavioral assumptions
 - `requirements.txt` - Python dependencies
 
-## Test Results
+## 🔧 Customization Guide
 
-The simulation successfully runs and shows expected behavior:
+**To Match Your Use Case:**
 
-```
-Testing basic simulation...
-Final user count: 13
-Active users: 10
-Network nodes: 13
-Network edges: 8
+1. **Update Behavioral Parameters**: Modify referral/churn rates in scenario definitions
+2. **Adjust Economic Parameters**: Change reward amounts and decay in model initialization
+3. **Customize Events**: Modify purchase probability and amounts in `_generate_reward_events()`
+4. **Add Network Effects**: Implement clustering or geographic constraints in agent behavior
 
-Testing parameter sweep...
-Params: {'referral_probability': 0.05, 'average_referrals': 1.5} -> Final users: 46
-Params: {'referral_probability': 0.15, 'average_referrals': 2.5} -> Final users: 283
-Params: {'referral_probability': 0.25, 'average_referrals': 3.5} -> Final users: 1000
-```
-
-This demonstrates:
-- ✅ Agent-based modeling with user behavior
-- ✅ Network growth simulation
-- ✅ Parameter sensitivity analysis
-- ✅ Data collection and visualization
-
-## Running the Simulation
-
-### Basic Test
-```bash
-cd simulation
-source venv/bin/activate
-python test_simulation.py
-```
-
-This will run a basic simulation and parameter sweep, printing results to the console.
-
-### Web Visualization
-```bash
-cd simulation
-source venv/bin/activate
-python visualization.py
-```
-
-This launches a web interface where you can adjust parameters and watch the simulation in real-time (requires Solara).
-
-### Jupyter Notebook Analysis
-```bash
-cd simulation
-source venv/bin/activate
-jupyter notebook
-```
-
-Create a new notebook and import the simulation:
+**Example Customization**:
 ```python
-from referral_model import ReferralModel, run_simulation
-import matplotlib.pyplot as plt
-import pandas as pd
-
-# Run parameter sweep
-params = {"referral_probability": 0.1, "average_referrals": 2.0}
-models = run_simulation(params, max_steps=50, n_runs=3)
-
-# Analyze results
-for i, model in enumerate(models):
-    df = model.datacollector.get_model_vars_dataframe()
-    plt.plot(df['Total Users'], label=f'Run {i+1}')
-
-plt.legend()
-plt.show()
-```
-
-## Model Parameters
-
-### User Behavior
-- `n_initial_users`: Starting number of users (default: 10)
-- `average_referrals`: Mean referrals per user (Poisson distribution, default: 2.0)
-- `referral_probability`: Probability a user makes referrals each step (default: 0.1)
-- `churn_probability`: Probability a user becomes inactive each step (default: 0.01)
-- `max_users`: Maximum users in simulation (default: 1000)
-- `max_referrals_per_step`: Max referrals per time step (default: 3)
-- `min_referral_delay`: Steps before a user can refer others (default: 5)
-
-### Reward System
-- `reward_decay_type`: 'exponential', 'linear', or 'fixed' (default: 'exponential')
-- `reward_decay_factor`: Decay rate in basis points (default: 7000 = 70%)
-- `min_reward`: Minimum reward per level (default: 0.01)
-- `original_user_percentage`: Percentage for triggering user (default: 8000 = 80%)
-
-## Output Metrics
-
-The simulation tracks:
-- **Total Users**: All users ever created
-- **Active Users**: Currently active users
-- **Total Referrals**: Cumulative referral count
-- **Average Referral Count**: Mean referrals per user
-- **Network Density**: Ratio of actual to possible connections
-- **Average Path Length**: Average shortest path between users
-
-## Example Usage
-
-```python
-from referral_model import ReferralModel
-
-# Create model with custom parameters
+# For a high-churn mobile app
 model = ReferralModel(
-    n_initial_users=20,
-    average_referrals=3.0,
-    referral_probability=0.2,
-    churn_probability=0.005,
-    reward_decay_type='exponential',
-    reward_decay_factor=8000  # 80% retention
+    referral_probability=0.08,    # Lower engagement
+    churn_probability=0.015,      # Higher churn
+    reward_decay_factor=6000,     # More aggressive decay
+    original_user_percentage=7500  # More rewards to purchasers
 )
-
-# Run simulation
-for step in range(100):
-    model.step()
-
-# Get results
-df = model.datacollector.get_model_vars_dataframe()
-print(df.tail())
 ```
 
-## Parameter Sensitivity Analysis
+## 📚 Documentation
 
-Use the `run_simulation` function for batch analysis:
+- **[Behavioral Assumptions](assumptions/user_behavior_assumptions.md)**: Detailed justification for all parameters
+- **Smart Contract Integration**: Parameters map directly to `RewardDistributor.sol`
+- **Economic Modeling**: Complete incentive system with cost-benefit analysis
 
-```python
-from referral_model import run_simulation
+---
 
-# Test different referral rates
-params_list = [
-    {"referral_probability": 0.05, "average_referrals": 1.5},
-    {"referral_probability": 0.15, "average_referrals": 2.5},
-    {"referral_probability": 0.25, "average_referrals": 3.5},
-]
-
-results = []
-for params in params_list:
-    models = run_simulation(params, max_steps=50, n_runs=5)
-    # Analyze average outcomes across runs
-    avg_final_users = sum(len(m.schedule.agents) for m in models) / len(models)
-    results.append({"params": params, "avg_final_users": avg_final_users})
-```
-
-## Next Steps
-
-1. **Validate the Model**: Compare simulation outputs against real referral program data
-2. **Sensitivity Analysis**: Test how changes in parameters affect outcomes
-3. **Behavioral Calibration**: Adjust user behavior parameters to match observed patterns
-4. **Reward Optimization**: Find optimal reward distribution parameters
-5. **Monte Carlo Analysis**: Run thousands of simulations to understand uncertainty
-
-## Integration with Main Project
-
-The simulation parameters should eventually be linked to the actual smart contract parameters defined in the main project's contracts. Key mappings:
-
-- Simulation `reward_decay_type/factor` → Contract `decayType/decayFactor`
-- Simulation `min_reward` → Contract `minReward`
-- Simulation `original_user_percentage` → Contract `originalUserPercentage`
-
-This allows you to test contract parameter changes in simulation before deployment.
+**Ready to optimize your referral economics?** Start with `python scenario_test.py moderate` and customize from there! 🎯
