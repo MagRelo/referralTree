@@ -23,8 +23,8 @@ contract ReferralGraphInvariantTest is Test {
 
     function setUp() public {
         vm.prank(owner);
-        referralGraph = new ReferralGraph(owner, root, false, address(0));
-        
+        referralGraph = new ReferralGraph(owner, false, address(0));
+
         vm.prank(owner);
         referralGraph.authorizeOracle(oracle);
         

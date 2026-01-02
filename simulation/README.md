@@ -15,6 +15,14 @@ A Mesa-based agent simulation that models the **economic incentives** and **vira
 - **Churn Modeling**: Users become inactive over time
 - **Engagement Patterns**: Time-based delays and probability distributions
 
+## 🎯 Key Features
+
+- **Agent-Based Modeling**: Individual users with realistic behavior patterns
+- **Economic Incentives**: Reward distribution through referral chains
+- **Parameter Sensitivity**: Test different referral rates, churn, and reward structures
+- **Monte Carlo Analysis**: Statistical validation of growth scenarios
+- **Network Visualization**: Tree structures and viral coefficient analysis
+
 ## 📊 Parameters & Assumptions Assessment
 
 Use this table to evaluate if the simulation matches your use case. All parameters are customizable.
@@ -26,7 +34,6 @@ Use this table to evaluate if the simulation matches your use case. All paramete
 | | Referral Probability | 15% daily | 15% of engaged users refer daily | Match your observed referral rate | `referral_probability` |
 | | Churn Rate | 1% daily | ~70% retention over 3 months | Use your actual churn data | `churn_probability` |
 | **User Behavior** | Referral Delay | 5 days | Time to understand/learn product | Adjust for your onboarding time | `min_referral_delay` |
-| | Active User Definition | Not churned | Users still engaged | Customize based on your metrics | Agent `active` attribute |
 | | Referral Limits | 3 per step | Prevent unrealistic growth | Set based on platform limits | `max_referrals_per_step` |
 | **Economic Events** | Purchase Probability | 2% daily | 2% of users trigger rewards daily | Match your transaction rate | `event_probability` in code |
 | | Purchase Amount | Log-normal μ=$7.39 | Realistic transaction distribution | Use your average order value | Distribution parameters |
@@ -36,9 +43,6 @@ Use this table to evaluate if the simulation matches your use case. All paramete
 | | Minimum Reward | $0.05 | Smallest reward payment | Set transaction fee minimum | `min_reward` |
 | **Network Structure** | Max Users | 1,000 | Simulation capacity limit | Scale based on expected growth | `max_users` |
 | | Max Depth | 50 levels | Prevent infinite chains | Set based on your reward limits | Chain traversal limit |
-| | Referral Clustering | Random | No geographic/social clustering | Add clustering if needed | Network generation logic |
-| **Time Dynamics** | Step Duration | 1 day | Each simulation step = 1 day | Match your analysis timeframe | Interpretation of results |
-| | Simulation Length | 50 days | Default run duration | Adjust for your planning horizon | Function parameters |
 
 ## 🎯 Use Case Assessment
 
@@ -101,6 +105,7 @@ python scenario_test.py compare
 - `test_simulation.py` - Basic functionality tests
 - `assumptions/user_behavior_assumptions.md` - Detailed behavioral assumptions
 - `requirements.txt` - Python dependencies
+- `assumptions/user_behavior_assumptions.md` - Detailed behavioral assumptions
 
 ## 🔧 Customization Guide
 
@@ -121,12 +126,6 @@ model = ReferralModel(
     original_user_percentage=7500  # More rewards to purchasers
 )
 ```
-
-## 📚 Documentation
-
-- **[Behavioral Assumptions](assumptions/user_behavior_assumptions.md)**: Detailed justification for all parameters
-- **Smart Contract Integration**: Parameters map directly to `RewardDistributor.sol`
-- **Economic Modeling**: Complete incentive system with cost-benefit analysis
 
 ---
 

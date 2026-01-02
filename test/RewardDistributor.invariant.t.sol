@@ -31,7 +31,7 @@ contract RewardDistributorInvariantTest is Test {
     function setUp() public {
         // Create mock contracts
         platformToken = new MockERC20("Platform Token", "PT", 18);
-        referralGraph = new MockReferralGraph(root);
+        referralGraph = new MockReferralGraph(root); // Mock ignores root param now
         
         oracleSigner = vm.addr(ORACLE_PRIVATE_KEY);
         

@@ -16,6 +16,9 @@ import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
 contract RewardDistributor is IRewardDistributor, Ownable {
     using ECDSA for bytes32;
 
+    /// @notice Special address representing the null referrer (ultimate root)
+    address public constant NULL_REFERRER = address(0x0000000000000000000000000000000000000001);
+
     /// @notice Referral graph contract
     IReferralGraph public immutable referralGraph;
 
@@ -208,10 +211,16 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         address root = referralGraph.getRoot();
 
         address current = user;
-        while (current != address(0) && current != root && chainLength < chain.length) {
+        while (current != address(0) && chainLength < chain.length) {
             chain[chainLength] = current;
             chainLength++;
+
             current = referralGraph.getReferrer(current, groupId);
+
+            // Stop if we hit a non-null referrer root (but include null referrer root)
+            if (current == root && root != NULL_REFERRER) {
+                break;
+            }
         }
 
         // Resize array to actual length
@@ -263,14 +272,69 @@ contract RewardDistributor is IRewardDistributor, Ownable {
     }
 
     /**
-     * @notice Calculate reward distribution across the referral chain using mathematical decay
-     * @param totalAmount Base amount from which referral rewards are calculated
-     * @param chain Array of addresses in the referral chain (user at index 0)
+     * @notice Calculate reward distribution across a referral chain with null referrer handling
+     * @param totalAmount Total amount to distribute
+     * @param chain Referral chain starting with the user who triggered the reward
+     * @param dustRecipient Address to receive any undistributed dust (< minReward)
      * @return recipients Array of addresses to receive rewards
-     * @return amounts Array of amounts each recipient gets
-     * @dev Original user gets originalUserPercentage, referrers get decayed amounts
+     * @return amounts Array of reward amounts corresponding to recipients
+     * @dev Implements proportional redistribution when null referrer is reached
      */
     function _calculateChainRewards(uint256 totalAmount, address[] memory chain, address dustRecipient)
+        internal
+        view
+        returns (address[] memory recipients, uint256[] memory amounts)
+    {
+        // Step 1: Find null referrer position in chain
+        int256 nullIndex = _findNullReferrerIndex(chain);
+
+        // Step 2: If no null referrer, use normal distribution
+        if (nullIndex == -1) {
+            return _calculateNormalDistribution(totalAmount, chain, dustRecipient);
+        }
+
+        // Step 3: Calculate distribution up to null referrer
+        (recipients, amounts) = _calculateUpToNullReferrer(totalAmount, chain, uint256(nullIndex));
+
+        // Step 4: Collect rewards that would go to null referrer
+        uint256 collectedAmount = amounts[uint256(nullIndex)];
+
+        // Step 5: Handle redistribution or dust
+        if (collectedAmount >= _minReward) {
+            // Redistribute proportionally among valid recipients
+            _redistributeProportionally(recipients, amounts, collectedAmount, uint256(nullIndex));
+            amounts[uint256(nullIndex)] = 0; // Zero out null referrer
+        } else if (collectedAmount > 0) {
+            // True dust (< minReward) goes to oracle
+            _sendDustToOracle(recipients, amounts, collectedAmount, dustRecipient);
+            amounts[uint256(nullIndex)] = 0; // Zero out null referrer
+        }
+
+        // Step 6: Finalize distribution (resize arrays, remove zero amounts)
+        return _finalizeDistribution(recipients, amounts);
+    }
+
+    /**
+     * @notice Find the index of null referrer in the chain
+     * @param chain The referral chain to search
+     * @return Index of null referrer, or -1 if not found
+     */
+    function _findNullReferrerIndex(address[] memory chain) internal pure returns (int256) {
+        for (uint256 i = 0; i < chain.length; i++) {
+            if (chain[i] == NULL_REFERRER) {
+                return int256(i);
+            }
+        }
+        return -1; // Not found
+    }
+
+    /**
+     * @notice Calculate normal distribution (unchanged from original logic)
+     * @param totalAmount Total amount to distribute
+     * @param chain Full referral chain
+     * @param dustRecipient Address for dust
+     */
+    function _calculateNormalDistribution(uint256 totalAmount, address[] memory chain, address dustRecipient)
         internal
         view
         returns (address[] memory recipients, uint256[] memory amounts)
@@ -290,7 +354,6 @@ contract RewardDistributor is IRewardDistributor, Ownable {
 
         // Referral chain rewards with sequential decay distribution
         uint256 remainingToDistribute = remainingForChain;
-        uint256 totalDistributed = originalUserReward;
         uint256 recipientCount = 1; // Start with 1 (original user)
 
         for (uint256 i = 0; i < numReferrers; i++) {
@@ -319,7 +382,6 @@ contract RewardDistributor is IRewardDistributor, Ownable {
                 recipients[recipientCount] = chain[i + 1];
                 amounts[recipientCount] = levelReward;
                 remainingToDistribute -= levelReward;
-                totalDistributed += levelReward;
                 recipientCount++;
             } else {
                 break;
@@ -330,7 +392,6 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         if (remainingToDistribute > 0) {
             recipients[recipientCount] = dustRecipient;
             amounts[recipientCount] = remainingToDistribute;
-            totalDistributed += remainingToDistribute;
             recipientCount++;
         }
 
@@ -341,6 +402,121 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         for (uint256 i = 0; i < recipientCount; i++) {
             finalRecipients[i] = recipients[i];
             finalAmounts[i] = amounts[i];
+        }
+
+        return (finalRecipients, finalAmounts);
+    }
+
+    /**
+     * @notice Calculate distribution up to null referrer position
+     * @param totalAmount Total amount to distribute
+     * @param chain Full referral chain
+     * @param nullIndex Position of null referrer
+     */
+    function _calculateUpToNullReferrer(uint256 totalAmount, address[] memory chain, uint256 nullIndex)
+        internal
+        view
+        returns (address[] memory recipients, uint256[] memory amounts)
+    {
+        // Create truncated chain up to and including null referrer
+        address[] memory truncatedChain = new address[](nullIndex + 1);
+        for (uint256 i = 0; i <= nullIndex; i++) {
+            truncatedChain[i] = chain[i];
+        }
+
+        // Calculate normal distribution on truncated chain
+        return _calculateNormalDistribution(totalAmount, truncatedChain, address(0));
+    }
+
+    /**
+     * @notice Redistribute amount proportionally among valid recipients
+     * @param recipients Array of recipient addresses
+     * @param amounts Array of reward amounts
+     * @param amountToRedistribute Amount to redistribute
+     * @param nullIndex Index of null referrer to exclude
+     */
+    function _redistributeProportionally(
+        address[] memory recipients,
+        uint256[] memory amounts,
+        uint256 amountToRedistribute,
+        uint256 nullIndex
+    ) internal pure {
+        // Calculate total rewards among valid recipients (exclude null referrer)
+        uint256 totalValidRewards = 0;
+        for (uint256 i = 0; i < recipients.length; i++) {
+            if (i != nullIndex && recipients[i] != address(0) && amounts[i] > 0) {
+                totalValidRewards += amounts[i];
+            }
+        }
+
+        // Redistribute proportionally based on existing reward shares
+        if (totalValidRewards > 0) {
+            for (uint256 i = 0; i < recipients.length; i++) {
+                if (i != nullIndex && recipients[i] != address(0) && amounts[i] > 0) {
+                    uint256 additional = (amountToRedistribute * amounts[i]) / totalValidRewards;
+                    amounts[i] += additional;
+                }
+            }
+        }
+    }
+
+    /**
+     * @notice Send dust amount to oracle
+     * @param recipients Recipients array (modified in place)
+     * @param amounts Amounts array (modified in place)
+     * @param dustAmount Amount of dust to send
+     * @param dustRecipient Oracle address
+     */
+    function _sendDustToOracle(
+        address[] memory recipients,
+        uint256[] memory amounts,
+        uint256 dustAmount,
+        address dustRecipient
+    ) internal pure {
+        // Find first empty slot or extend array
+        for (uint256 i = 0; i < recipients.length; i++) {
+            if (recipients[i] == address(0)) {
+                recipients[i] = dustRecipient;
+                amounts[i] = dustAmount;
+                return;
+            }
+        }
+
+        // If no empty slot, this shouldn't happen in normal operation
+        // The arrays are sized to accommodate dust recipient
+        revert("No space for dust recipient");
+    }
+
+    /**
+     * @notice Finalize distribution by resizing arrays and removing zero amounts
+     * @param recipients Raw recipients array
+     * @param amounts Raw amounts array
+     * @return Final recipients and amounts with no zeros/empty slots
+     */
+    function _finalizeDistribution(address[] memory recipients, uint256[] memory amounts)
+        internal
+        pure
+        returns (address[] memory, uint256[] memory)
+    {
+        // Count valid entries (non-zero amounts and non-zero addresses)
+        uint256 validCount = 0;
+        for (uint256 i = 0; i < recipients.length; i++) {
+            if (recipients[i] != address(0) && amounts[i] > 0) {
+                validCount++;
+            }
+        }
+
+        // Create final arrays
+        address[] memory finalRecipients = new address[](validCount);
+        uint256[] memory finalAmounts = new uint256[](validCount);
+
+        uint256 index = 0;
+        for (uint256 i = 0; i < recipients.length; i++) {
+            if (recipients[i] != address(0) && amounts[i] > 0) {
+                finalRecipients[index] = recipients[i];
+                finalAmounts[index] = amounts[i];
+                index++;
+            }
         }
 
         return (finalRecipients, finalAmounts);

@@ -10,6 +10,9 @@ import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
  * @dev Prevents cycles and enforces depth limits for security
  */
 contract ReferralGraph is IReferralGraph, Ownable {
+    /// @notice Special address representing the null referrer (ultimate root)
+    address public constant NULL_REFERRER = address(0x0000000000000000000000000000000000000001);
+
     /// @notice Maps group -> user -> referrer
     mapping(bytes32 => mapping(address => address)) private _referrers;
 
@@ -22,8 +25,8 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @notice Whether the allowlist is enabled
     bool private _allowlistEnabled;
 
-    /// @notice Root address for the system (can be address(0) for no root)
-    address private _root;
+    /// @notice Root address for the system (forced to NULL_REFERRER)
+    address private constant _root = NULL_REFERRER;
 
     /// @notice Authorized oracle addresses that can register referrals
     mapping(address => bool) private _authorizedOracles;
@@ -34,23 +37,19 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /**
      * @notice Constructor
      * @param initialOwner The initial owner of the contract
-     * @param root The root address for the referral tree
      * @param allowlistEnabled Whether to enable referrer allowlist
      * @param initialOracle Initial oracle address to authorize (optional, can be address(0))
+     * @dev Root is forced to NULL_REFERRER to enable proportional redistribution
      */
     constructor(
         address initialOwner,
-        address root,
         bool allowlistEnabled,
         address initialOracle
     ) Ownable(initialOwner) {
-        _root = root;
         _allowlistEnabled = allowlistEnabled;
 
-        // If root is set, mark it as allowed
-        if (root != address(0)) {
-            _allowedReferrers[root] = true;
-        }
+        // NULL_REFERRER is always allowed as referrer
+        _allowedReferrers[NULL_REFERRER] = true;
 
         // If initial oracle is set, authorize it
         if (initialOracle != address(0)) {
@@ -148,7 +147,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
     function _register(address user, address referrer, bytes32 groupId) internal {
         if (user == address(0)) revert InvalidReferrer();
         if (_referrers[groupId][user] != address(0)) revert AlreadyRegistered();
-        if (referrer == address(0) && _root != address(0)) revert InvalidReferrer();
+        if (referrer == address(0)) revert InvalidReferrer(); // Must have referrer
         if (referrer != address(0) && referrer == user) revert InvalidReferrer();
 
         // If referrer provided, they must be in the referral tree
