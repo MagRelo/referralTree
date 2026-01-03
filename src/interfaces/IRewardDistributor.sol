@@ -8,12 +8,7 @@ import {IReferralGraph} from "./IReferralGraph.sol";
  * @notice Interface for the reward distribution contract with oracle-based chain rewards
  */
 interface IRewardDistributor {
-    /// @notice Types of decay functions for reward distribution
-    enum DecayType {
-        LINEAR,      // Each level takes decayFactor% of remaining amount
-        EXPONENTIAL, // Each level takes decayFactor% of remaining amount (sequential decay)
-        FIXED       // Each level takes fixed amount until remaining < minReward
-    }
+
 
     /// @notice Chain reward distribution data
     struct ChainRewardData {
@@ -71,11 +66,7 @@ interface IRewardDistributor {
     /// @return Percentage in basis points (e.g., 8000 = 80%)
     function getOriginalUserPercentage() external view returns (uint256);
 
-    /// @notice Get the decay configuration for referral rewards
-    /// @return decayType The type of decay function
-    /// @return decayFactor The decay factor/rate (basis points)
-    /// @return minReward Minimum reward per level (wei)
-    function getDecayConfig() external view returns (DecayType decayType, uint256 decayFactor, uint256 minReward);
+
 
 
     /// @notice Check if a reward has been distributed
@@ -106,11 +97,7 @@ interface IRewardDistributor {
     /// @param percentage Percentage in basis points (max 10000 = 100%)
     function setOriginalUserPercentage(uint256 percentage) external;
 
-    /// @notice Set the decay configuration for referral rewards
-    /// @param decayType The type of decay function
-    /// @param decayFactor The decay factor/rate (basis points)
-    /// @param minReward Minimum reward per level (wei)
-    function setDecayConfig(DecayType decayType, uint256 decayFactor, uint256 minReward) external;
+
 
 
 

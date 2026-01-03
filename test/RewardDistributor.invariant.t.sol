@@ -160,26 +160,7 @@ contract RewardDistributorInvariantTest is Test {
         assertGe(originalUserPercentage, 0, "Original user percentage cannot be negative");
     }
 
-    /// @notice Invariant: Decay configuration values are within valid bounds
-    function invariant_DecayConfigValid() public view {
-        (
-            IRewardDistributor.DecayType decayType,
-            uint256 decayFactor,
-            uint256 minReward
-        ) = config.getDecayConfig();
-        
-        // Decay type should be valid enum value
-        assertTrue(
-            decayType <= IRewardDistributor.DecayType.FIXED,
-            "Invalid decay type"
-        );
-        
-        // Decay factor should be reasonable (0-100% in basis points)
-        assertLe(decayFactor, 10000, "Decay factor exceeds 100%");
-        
-        // Min reward should be reasonable
-        assertLe(minReward, 100 ether, "Min reward too large");
-    }
+
 
     /// @notice Invariant: Contract token balance is always sufficient for pending distributions
     /// @dev This ensures the contract doesn't go into negative balance

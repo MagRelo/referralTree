@@ -16,19 +16,25 @@ Imagine Alice refers Bob to your platform. Bob then refers Carol, and Carol refe
 ```
 Referral Tree:           Reward Distribution:
 
-    Alice                    Alice (12.60)
+    User0                     User0 (11.38)
      │                        ▲
      ▼                        │
-    Bob                      Bob   (42.00)
+    User1                    User1  (18.72)
      │                        ▲
      ▼                        │
-   Carol                    Carol  (140.00)
+   User2                    User2   (31.21)
      │                        ▲
      ▼                        │
-   Dave (earn reward)       Dave   (800.00)
+   User3                    User3   (52.01)
+     │                        ▲
+     ▼                        │
+   User4                    User4   (86.68)
+     │                        ▲
+     ▼                        │
+   User5 (earn reward)      User5   (800.00)
 ```
 
-**The reward pool flows upward** through the referral tree, with each level receiving a mathematically decreasing portion.
+**The reward pool flows upward** through the referral tree, with each level receiving a geometrically decreasing portion.
 
 ### Exponential Network Growth
 
@@ -56,14 +62,13 @@ Referral Tree (each person refers multiple users):
 | Level    | User   | Amount | Cumulative |
 | -------- | ------ | ------ | ---------- |
 | Original | User5  | 800.00 | 800.00     |
-| Level 0  | User4  | 140.00 | 940.00     |
-| Level 1  | User3  | 42.00  | 982.00     |
-| Level 2  | User2  | 12.60  | 994.60     |
-| Level 3  | User1  | 3.78   | 998.38     |
-| Level 4  | User0  | 1.13   | 999.51     |
-| Dust     | Oracle | 0.49   | 1000.00    |
+| Level 0  | User4  | 86.68  | 886.68     |
+| Level 1  | User3  | 52.01  | 938.69     |
+| Level 2  | User2  | 31.21  | 969.90     |
+| Level 3  | User1  | 18.72  | 988.62     |
+| Level 4  | User0  | 11.38  | 1000.00    |
 
-**Total Distributed:** 1000.00 tokens (100% utilization - dust to oracle)
+**Total Distributed:** 1000.00 tokens (100% utilization)
 
 ### Group Incentives
 
@@ -126,7 +131,7 @@ bytes memory signature = signReward(reward, projectAOraclePrivateKey);
 /// @notice Distribute rewards across referral chain
 /// @param reward The chain reward data containing base amount for percentage calculations
 /// @param signature Oracle signature of the reward data
-/// @dev Only distributes to referrers based on decay percentages, not the full totalAmount
+/// @dev Distributes 80% to the original user and remaining 20% across the referral chain
 rewardDistributor.distributeChainRewards(reward, signature);
 ```
 
@@ -162,12 +167,9 @@ rewardDistributor.authorizeOracle(projectBOracle);
 
 **3. Configure Reward Distribution**
 
-Set system-wide reward parameters:
+Set the original user reward percentage (decay is fixed at geometric with 60% retention per level):
 
 ```solidity
-// Set decay parameters (70% retention per level)
-rewardDistributor.setDecayConfig(IRewardDistributor.DecayType.EXPONENTIAL, 7000, 0.01 ether);
-
 // Set original user reward percentage (80%)
 rewardDistributor.setOriginalUserPercentage(8000);
 ```
@@ -203,9 +205,7 @@ rewardDistributor.setOriginalUserPercentage(8000);
 
 #### Reward Configuration
 
-- `setDecayConfig(DecayType type, uint256 factor, uint256 minReward)` - Configure decay (owner only)
 - `setOriginalUserPercentage(uint256 percentage)` - Set user reward percentage (owner only)
-- `getDecayConfig()` - Get current decay settings
 - `getOriginalUserPercentage()` - Get user percentage
 
 #### Reward Distribution
