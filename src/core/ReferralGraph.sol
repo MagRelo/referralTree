@@ -19,11 +19,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @notice Maps group -> referrer -> children
     mapping(bytes32 => mapping(address => address[])) private _children;
 
-    /// @notice Set of allowed referrers (if allowlist is enabled)
-    mapping(address => bool) private _allowedReferrers;
 
-    /// @notice Whether the allowlist is enabled
-    bool private _allowlistEnabled;
 
     /// @notice Root address for the system (forced to NULL_REFERRER)
     address private constant _root = NULL_REFERRER;
@@ -37,19 +33,13 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /**
      * @notice Constructor
      * @param initialOwner The initial owner of the contract
-     * @param allowlistEnabled Whether to enable referrer allowlist
      * @param initialOracle Initial oracle address to authorize (optional, can be address(0))
      * @dev Root is forced to NULL_REFERRER to enable proportional redistribution
      */
     constructor(
         address initialOwner,
-        bool allowlistEnabled,
         address initialOracle
     ) Ownable(initialOwner) {
-        _allowlistEnabled = allowlistEnabled;
-
-        // NULL_REFERRER is always allowed as referrer
-        _allowedReferrers[NULL_REFERRER] = true;
 
         // If initial oracle is set, authorize it
         if (initialOracle != address(0)) {
@@ -112,11 +102,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
         return _referrers[groupId][user] != address(0);
     }
 
-    /// @inheritdoc IReferralGraph
-    function isAllowedReferrer(address referrer) external view returns (bool) {
-        if (!_allowlistEnabled) return true;
-        return _allowedReferrers[referrer];
-    }
+
 
     /// @notice Check if a user is in a group's referral tree
     /// @param user The user to check
@@ -153,10 +139,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
             revert InvalidReferrer(); // Referrer must be in the group's referral tree
         }
 
-        // Check allowlist if enabled
-        if (_allowlistEnabled && referrer != address(0) && !_allowedReferrers[referrer]) {
-            revert ReferrerNotAllowed();
-        }
+
 
         // Prevent cycles by checking if referrer is in user's ancestor chain
         if (_wouldCreateCycle(user, referrer, groupId)) {
@@ -187,28 +170,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
     }
 
 
-    /// @inheritdoc IReferralGraph
-    function allowReferrer(address referrer) external onlyOwner {
-        if (referrer == address(0)) revert InvalidReferrer();
-        _allowedReferrers[referrer] = true;
-        emit ReferrerAllowed(referrer);
-    }
 
-    /// @inheritdoc IReferralGraph
-    function disallowReferrer(address referrer) external onlyOwner {
-        _allowedReferrers[referrer] = false;
-        emit ReferrerDisallowed(referrer);
-    }
-
-    /// @inheritdoc IReferralGraph
-    function setAllowlistEnabled(bool enabled) external onlyOwner {
-        _allowlistEnabled = enabled;
-    }
-
-    /// @inheritdoc IReferralGraph
-    function isAllowlistEnabled() external view returns (bool) {
-        return _allowlistEnabled;
-    }
 
     /**
      * @notice Check if registering user with referrer would create a cycle

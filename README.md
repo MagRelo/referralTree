@@ -141,7 +141,7 @@ rewardDistributor.distributeChainRewards(reward, signature);
 
 ```bash
 # Deploy shared referral graph (with optional initial oracle)
-forge create src/core/ReferralGraph.sol:ReferralGraph --constructor-args <owner> <root> <allowlist> <initialOracle>
+forge create src/core/ReferralGraph.sol:ReferralGraph --constructor-args <owner> <initialOracle>
 
 # Deploy shared reward distributor
 forge create src/core/RewardDistributor.sol:RewardDistributor --constructor-args <owner> <referralGraph> <initialOracle>

@@ -19,7 +19,7 @@ contract ReferralGraphTest is Test {
 
     function setUp() public {
         vm.prank(owner);
-        referralGraph = new ReferralGraph(owner, false, address(0));
+        referralGraph = new ReferralGraph(owner, address(0));
 
         // Authorize oracle for registration
         vm.prank(owner);
@@ -30,8 +30,6 @@ contract ReferralGraphTest is Test {
     function testInitialSetup() public {
         assertEq(referralGraph.owner(), owner);
         assertEq(referralGraph.getRoot(), address(0x0000000000000000000000000000000000000001));
-        bool allowlistEnabled = referralGraph.isAllowlistEnabled();
-        assertEq(allowlistEnabled, false);
     }
 
     function testGroupAutoCreated() public {
@@ -148,28 +146,7 @@ contract ReferralGraphTest is Test {
         assertTrue(referralGraph.isRegistered(user4, testGroup));
     }
 
-    function testAllowlistFunctionality() public {
-        // Enable allowlist
-        vm.prank(owner);
-        referralGraph.setAllowlistEnabled(true);
 
-        // Add user1 as allowed referrer
-        vm.prank(owner);
-        referralGraph.allowReferrer(user1);
-
-        // Register user1 with null referrer first (so user1 is in the referral tree)
-        vm.prank(oracle);
-        referralGraph.register(user1, 0x0000000000000000000000000000000000000001, testGroup);
-
-        // Register user2 with user1 (should work)
-        vm.prank(oracle);
-        referralGraph.register(user2, user1, testGroup);
-
-        // Try to register user3 with user2 (should fail, user2 not allowed)
-        vm.prank(oracle);
-        vm.expectRevert(IReferralGraph.ReferrerNotAllowed.selector);
-        referralGraph.register(user3, user2, testGroup);
-    }
 
     function testBatchRegister() public {
         address[] memory users = new address[](3);
@@ -186,15 +163,7 @@ contract ReferralGraphTest is Test {
         assertEq(referralGraph.getChildren(0x0000000000000000000000000000000000000001, testGroup).length, 3);
     }
 
-    function testOnlyOwnerCanConfigure() public {
-        vm.prank(user1);
-        vm.expectRevert();
-        referralGraph.setAllowlistEnabled(true);
 
-        vm.prank(user1);
-        vm.expectRevert();
-        referralGraph.allowReferrer(user2);
-    }
 
     function testUnauthorizedCannotRegister() public {
         // Try to register without being an authorized oracle
@@ -275,7 +244,7 @@ contract ReferralGraphTest is Test {
         address initialOracle = address(10);
 
         vm.prank(owner);
-        ReferralGraph newGraph = new ReferralGraph(owner, false, address(0));
+        ReferralGraph newGraph = new ReferralGraph(owner, address(0));
 
         // Manually authorize the oracle
         vm.prank(owner);

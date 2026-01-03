@@ -8,18 +8,13 @@ contract MockReferralGraph is IReferralGraph {
 
     mapping(address => address) private _referrers;
     mapping(address => address[]) private _children;
-    mapping(address => bool) private _allowedReferrers;
-    bool private _allowlistEnabled;
+
     address private _root;
     mapping(address => bool) private _authorizedOracles;
     address[] private _authorizedOraclesList;
 
     constructor(address root) {
         _root = root;  // Respect the root parameter for testing flexibility
-        _allowedReferrers[root] = true;
-        if (root == NULL_REFERRER) {
-            _allowedReferrers[NULL_REFERRER] = true;
-        }
         // In mock, authorize address(0) as default oracle to allow any caller
         _authorizedOracles[address(0)] = true;
     }
@@ -114,25 +109,7 @@ contract MockReferralGraph is IReferralGraph {
     }
 
 
-    function isAllowedReferrer(address referrer) external view returns (bool) {
-        return _allowedReferrers[referrer];
-    }
 
-    function allowReferrer(address referrer) external {
-        _allowedReferrers[referrer] = true;
-    }
-
-    function disallowReferrer(address referrer) external {
-        _allowedReferrers[referrer] = false;
-    }
-
-    function setAllowlistEnabled(bool enabled) external {
-        _allowlistEnabled = enabled;
-    }
-
-    function isAllowlistEnabled() external view returns (bool) {
-        return _allowlistEnabled;
-    }
 
     function getReferralChain(address user) external view returns (address[] memory) {
         address[] memory chain = new address[](10);
