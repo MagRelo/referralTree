@@ -116,4 +116,3 @@ interface IReferralGraph {
     /// @return Array of authorized oracle addresses
     function getAuthorizedOracles() external view returns (address[] memory);
 }
-

@@ -67,7 +67,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
         return _referrers[groupId][user];
     }
 
-
     /// @notice Get the children of a referrer in a group
     /// @param referrer The referrer to query
     /// @param groupId The group ID
@@ -75,7 +74,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
     function getChildren(address referrer, bytes32 groupId) external view returns (address[] memory) {
         return _children[groupId][referrer];
     }
-
 
     /// @notice Get the ancestor chain for a user in a group
     /// @param user The user to get ancestors for
@@ -113,7 +111,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
     function isRegistered(address user, bytes32 groupId) external view returns (bool) {
         return _referrers[groupId][user] != address(0);
     }
-
 
     /// @inheritdoc IReferralGraph
     function isAllowedReferrer(address referrer) external view returns (bool) {
@@ -179,7 +176,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
         _register(user, referrer, groupId);
     }
 
-
     /// @notice Batch register multiple users with the same referrer in a group
     /// @param users Array of users to register
     /// @param referrer The referrer for all users
@@ -228,8 +224,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
         }
         return false;
     }
-
-
 
     /**
      * @notice Get the root address

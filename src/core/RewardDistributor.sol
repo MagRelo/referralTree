@@ -32,11 +32,8 @@ contract RewardDistributor is IRewardDistributor, Ownable {
     /// @notice List of authorized oracles for enumeration
     address[] private _authorizedOraclesList;
 
-
-
     /// @notice Percentage for original user (basis points, default 80%)
     uint256 private _originalUserPercentage;
-
 
     /// @notice Tracks distributed rewards to prevent double distribution
     mapping(bytes32 => bool) private _distributedRewards;
@@ -74,14 +71,10 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         return _originalUserPercentage;
     }
 
-
-
-
     /// @inheritdoc IRewardDistributor
     function isRewardDistributed(bytes32 rewardHash) external view returns (bool) {
         return _distributedRewards[rewardHash];
     }
-
 
     /// @inheritdoc IRewardDistributor
     function authorizeOracle(address oracle) external onlyOwner {
@@ -127,11 +120,6 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         if (percentage > 10000) revert InvalidParameters(); // Max 100%
         _originalUserPercentage = percentage;
     }
-
-
-
-
-
 
     /// @inheritdoc IRewardDistributor
     function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external {

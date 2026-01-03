@@ -27,8 +27,6 @@ interface IRewardDistributor {
     /// @notice Emitted when an oracle is unauthorized
     event OracleUnauthorized(address indexed oracle);
 
-
-
     /// @notice Emitted when chain rewards are distributed
     /// @dev totalAmount is the base amount, amounts array shows actual distributed amounts
     event ChainRewardsDistributed(
