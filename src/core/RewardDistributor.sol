@@ -17,8 +17,8 @@ import {RewardCalculator} from "./RewardCalculator.sol";
 contract RewardDistributor is IRewardDistributor, Ownable {
     using ECDSA for bytes32;
 
-    /// @notice Special address representing the null referrer (ultimate root)
-    address public constant NULL_REFERRER = address(0x0000000000000000000000000000000000000001);
+    /// @notice Special address representing the root of all referral trees
+    address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
     /// @notice Referral graph contract
     IReferralGraph public immutable referralGraph;
@@ -59,12 +59,10 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         _originalUserPercentage = 8000; // 80%
     }
 
-
     /// @inheritdoc IRewardDistributor
     function getReferralGraph() external view returns (IReferralGraph) {
         return referralGraph;
     }
-
 
     /// @inheritdoc IRewardDistributor
     function getOriginalUserPercentage() external view returns (uint256) {
@@ -113,7 +111,6 @@ contract RewardDistributor is IRewardDistributor, Ownable {
     function getAuthorizedOracles() external view returns (address[] memory) {
         return _authorizedOraclesList;
     }
-
 
     /// @inheritdoc IRewardDistributor
     function setOriginalUserPercentage(uint256 percentage) external onlyOwner {
@@ -172,38 +169,34 @@ contract RewardDistributor is IRewardDistributor, Ownable {
      * @param user The user to get chain for
      * @param groupId The group ID for the referral chain
      * @return Array of addresses in the referral chain (including the user)
-     * @dev Retrieves the referral chain up to a reasonable limit. Distribution stops naturally when rewards decay below _minReward.
+     * @dev Only builds the chain needed for reward distribution (max 11 addresses: user + 10 ancestors)
      */
     function _getReferralChain(address user, bytes32 groupId) internal view returns (address[] memory) {
-        // Use a reasonable fixed size - most chains will be much shorter
-        // Distribution will stop naturally when rewards decay below _minReward
-        address[] memory chain = new address[](200);
-        uint256 chainLength = 0;
-        address root = referralGraph.getRoot();
+        // We only pay up to 10 ancestors + original user = 11 total
+        address[] memory chain = new address[](11);
+        uint256 length = 0;
 
         address current = user;
-        while (current != address(0) && chainLength < chain.length) {
-            chain[chainLength] = current;
-            chainLength++;
+        // Include the original user
+        chain[length++] = current;
 
+        // Add up to 10 ancestors, stopping at REFERRAL_ROOT or end of chain
+        while (length < 11) {
             current = referralGraph.getReferrer(current, groupId);
-
-            // Stop if we hit a non-null referrer root (but include null referrer root)
-            if (current == root && root != NULL_REFERRER) {
-                break;
+            if (current == address(0) || current == REFERRAL_ROOT) {
+                break; // Stop at end or root
             }
+            chain[length++] = current;
         }
 
-        // Resize array to actual length
-        address[] memory result = new address[](chainLength);
-        for (uint256 i = 0; i < chainLength; i++) {
+        // Resize to actual length (will be 1-11)
+        address[] memory result = new address[](length);
+        for (uint256 i = 0; i < length; i++) {
             result[i] = chain[i];
         }
 
         return result;
     }
-
-
 
     /**
      * @notice Calculate reward distribution across a referral chain
@@ -218,14 +211,9 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         view
         returns (address[] memory recipients, uint256[] memory amounts)
     {
-        // Determine numRecipients (exclude original user, cap at 10, stop at null referrer)
-        int256 nullIndex = _findNullReferrerIndex(chain);
-        uint256 numRecipients;
-        if (nullIndex == -1) {
-            numRecipients = chain.length > 1 ? chain.length - 1 : 0;
-        } else {
-            numRecipients = uint256(nullIndex) > 1 ? uint256(nullIndex) - 1 : 0;
-        }
+        // Determine numRecipients (exclude original user, cap at 10)
+        // Chain already stops at REFERRAL_ROOT, so distribute to all ancestors (up to 10)
+        uint256 numRecipients = chain.length > 1 ? chain.length - 1 : 0;
         if (numRecipients > 10) {
             numRecipients = 10;
         }
@@ -247,21 +235,4 @@ contract RewardDistributor is IRewardDistributor, Ownable {
             amounts[i + 1] = chainAmounts[i];
         }
     }
-
-    /**
-     * @notice Find the index of null referrer in the chain
-     * @param chain The referral chain to search
-     * @return Index of null referrer, or -1 if not found
-     */
-    function _findNullReferrerIndex(address[] memory chain) internal pure returns (int256) {
-        for (uint256 i = 0; i < chain.length; i++) {
-            if (chain[i] == NULL_REFERRER) {
-                return int256(i);
-            }
-        }
-        return -1; // Not found
-    }
-
-
 }
-

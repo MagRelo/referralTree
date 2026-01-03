@@ -22,8 +22,8 @@ class DecayType(Enum):
     FIXED = "fixed"
 
 
-# NULL_REFERRER constant matching the smart contract
-NULL_REFERRER = 0x0000000000000000000000000000000000000001
+# REFERRAL_ROOT constant matching the smart contract
+REFERRAL_ROOT = 0x0000000000000000000000000000000000000001
 
 
 @dataclass
@@ -260,15 +260,15 @@ class ReferralModel(mesa.Model):
                     break
 
             # Stop if we hit null referrer or limit depth
-            if current_id == NULL_REFERRER:
-                chain.append(NULL_REFERRER)
+            if current_id == REFERRAL_ROOT:
+                chain.append(REFERRAL_ROOT)
                 break
             elif len(chain) > 50:
                 break
 
         # If chain doesn't end with null referrer, add it as ultimate root
-        if not chain or chain[-1] != NULL_REFERRER:
-            chain.append(NULL_REFERRER)
+        if not chain or chain[-1] != REFERRAL_ROOT:
+            chain.append(REFERRAL_ROOT)
 
         return chain
 
@@ -280,7 +280,7 @@ class ReferralModel(mesa.Model):
         # Find null referrer index (stop distribution before null referrer)
         null_index = -1
         for i, user_id in enumerate(chain):
-            if user_id == NULL_REFERRER:
+            if user_id == REFERRAL_ROOT:
                 null_index = i
                 break
 

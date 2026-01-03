@@ -10,8 +10,8 @@ import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
  * @dev Prevents cycles and enforces depth limits for security
  */
 contract ReferralGraph is IReferralGraph, Ownable {
-    /// @notice Special address representing the null referrer (ultimate root)
-    address public constant NULL_REFERRER = address(0x0000000000000000000000000000000000000001);
+    /// @notice Special address representing the root of all referral trees
+    address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
     /// @notice Maps group -> user -> referrer
     mapping(bytes32 => mapping(address => address)) private _referrers;
@@ -19,23 +19,17 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @notice Maps group -> referrer -> children
     mapping(bytes32 => mapping(address => address[])) private _children;
 
-
-
-    /// @notice Root address for the system (forced to NULL_REFERRER)
-    address private constant _root = NULL_REFERRER;
-
     /// @notice Authorized oracle addresses that can register referrals
     mapping(address => bool) private _authorizedOracles;
 
     /// @notice List of authorized oracles for enumeration
     address[] private _authorizedOraclesList;
 
-    /**
-     * @notice Constructor
-     * @param initialOwner The initial owner of the contract
-     * @param initialOracle Initial oracle address to authorize (optional, can be address(0))
-     * @dev Root is forced to NULL_REFERRER to enable proportional redistribution
-     */
+     /**
+      * @notice Constructor
+      * @param initialOwner The initial owner of the contract
+      * @param initialOracle Initial oracle address to authorize (optional, can be address(0))
+      */
     constructor(
         address initialOwner,
         address initialOracle
@@ -71,7 +65,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @param maxLevels Maximum number of levels to traverse
     /// @return Array of ancestors, starting with immediate referrer
     function getAncestors(address user, bytes32 groupId, uint256 maxLevels) external view returns (address[] memory) {
-        if (user == address(0) || user == _root) {
+        if (user == address(0) || user == REFERRAL_ROOT) {
             return new address[](0);
         }
 
@@ -79,7 +73,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
         uint256 count = 0;
         address current = _referrers[groupId][user];
 
-        while (current != address(0) && current != _root && count < maxLevels) {
+        while (current != address(0) && current != REFERRAL_ROOT && count < maxLevels) {
             ancestors[count] = current;
             current = _referrers[groupId][current];
             count++;
@@ -102,15 +96,13 @@ contract ReferralGraph is IReferralGraph, Ownable {
         return _referrers[groupId][user] != address(0);
     }
 
-
-
     /// @notice Check if a user is in a group's referral tree
     /// @param user The user to check
     /// @param groupId The group ID
     /// @return True if user appears in the referral tree (has been referred or has referred others, or is root)
     function _isInReferralTree(address user, bytes32 groupId) internal view returns (bool) {
         // Root is always considered in the tree if set
-        if (user == _root && _root != address(0)) return true;
+        if (user == REFERRAL_ROOT && REFERRAL_ROOT != address(0)) return true;
         // User is in tree if they have been referred OR they have referred others
         return _referrers[groupId][user] != address(0) || _children[groupId][user].length > 0;
     }
@@ -135,11 +127,9 @@ contract ReferralGraph is IReferralGraph, Ownable {
 
         // If referrer provided, they must be in the referral tree
         // Exception: root is always allowed as referrer if set (for first registration)
-        if (referrer != address(0) && referrer != _root && !_isInReferralTree(referrer, groupId)) {
+        if (referrer != address(0) && referrer != REFERRAL_ROOT && !_isInReferralTree(referrer, groupId)) {
             revert InvalidReferrer(); // Referrer must be in the group's referral tree
         }
-
-
 
         // Prevent cycles by checking if referrer is in user's ancestor chain
         if (_wouldCreateCycle(user, referrer, groupId)) {
@@ -169,9 +159,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
         }
     }
 
-
-
-
     /**
      * @notice Check if registering user with referrer would create a cycle
      * @param user The user being registered
@@ -185,14 +172,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
             current = _referrers[groupId][current];
         }
         return false;
-    }
-
-    /**
-     * @notice Get the root address
-     * @return The root address
-     */
-    function getRoot() external view returns (address) {
-        return _root;
     }
 
     /// @inheritdoc IReferralGraph
@@ -233,4 +212,3 @@ contract ReferralGraph is IReferralGraph, Ownable {
         return _authorizedOraclesList;
     }
 }
-

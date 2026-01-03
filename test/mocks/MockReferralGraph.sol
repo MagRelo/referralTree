@@ -4,17 +4,16 @@ pragma solidity ^0.8.20;
 import {IReferralGraph} from "../../src/interfaces/IReferralGraph.sol";
 
 contract MockReferralGraph is IReferralGraph {
-    address public constant NULL_REFERRER = address(0x0000000000000000000000000000000000000001);
+    address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
     mapping(address => address) private _referrers;
     mapping(address => address[]) private _children;
 
-    address private _root;
+
     mapping(address => bool) private _authorizedOracles;
     address[] private _authorizedOraclesList;
 
-    constructor(address root) {
-        _root = root;  // Respect the root parameter for testing flexibility
+    constructor() {
         // In mock, authorize address(0) as default oracle to allow any caller
         _authorizedOracles[address(0)] = true;
     }
@@ -141,9 +140,7 @@ contract MockReferralGraph is IReferralGraph {
         // Mock implementation - do nothing
     }
 
-    function getRoot() external view returns (address) {
-        return _root;
-    }
+
 
     function authorizeOracle(address oracle) external {
         if (!_authorizedOracles[oracle]) {

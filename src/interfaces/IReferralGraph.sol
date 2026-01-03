@@ -9,8 +9,6 @@ interface IReferralGraph {
     /// @notice Emitted when a user registers with a referrer
     event UserRegistered(address indexed user, address indexed referrer);
 
-
-
     /// @notice Emitted when an oracle is authorized
     event OracleAuthorized(address indexed oracle);
 
@@ -25,8 +23,6 @@ interface IReferralGraph {
 
     /// @notice Error when trying to create a cycle in referral graph
     error CycleDetected();
-
-
 
     /// @notice Error when caller is not an authorized oracle
     error UnauthorizedOracle();
@@ -56,8 +52,6 @@ interface IReferralGraph {
     /// @return True if the user has a referrer in the group
     function isRegistered(address user, bytes32 groupId) external view returns (bool);
 
-
-
     /// @notice Register a user with a referrer in a group
     /// @param user The user being registered
     /// @param referrer The referrer address (must be in the group's referral tree, or address(0) for root registration)
@@ -70,12 +64,6 @@ interface IReferralGraph {
     /// @param referrer The referrer for all users
     /// @param groupId The group ID
     function batchRegister(address[] calldata users, address referrer, bytes32 groupId) external;
-
-
-
-    /// @notice Get the root address
-    /// @return The root address
-    function getRoot() external view returns (address);
 
     /// @notice Authorize an oracle to register referrals
     /// @param oracle The oracle address to authorize

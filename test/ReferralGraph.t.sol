@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {ReferralGraph} from "../src/core/ReferralGraph.sol";
 import {IReferralGraph} from "../src/interfaces/IReferralGraph.sol";
 
@@ -29,7 +29,7 @@ contract ReferralGraphTest is Test {
 
     function testInitialSetup() public {
         assertEq(referralGraph.owner(), owner);
-        assertEq(referralGraph.getRoot(), address(0x0000000000000000000000000000000000000001));
+        assertEq(referralGraph.REFERRAL_ROOT(), address(0x0000000000000000000000000000000000000001));
     }
 
     function testGroupAutoCreated() public {
@@ -155,7 +155,18 @@ contract ReferralGraphTest is Test {
         users[2] = user3;
 
         vm.prank(oracle);
+        vm.recordLogs();
         referralGraph.batchRegister(users, 0x0000000000000000000000000000000000000001, testGroup);
+
+        // Check that UserRegistered events were emitted for each user
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 3, "Should have 3 UserRegistered events");
+
+        for (uint256 i = 0; i < entries.length; i++) {
+            assertEq(entries[i].topics[0], keccak256("UserRegistered(address,address)"), "Event signature should match");
+            assertEq(address(uint160(uint256(entries[i].topics[1]))), users[i], "Event should contain correct user");
+            assertEq(address(uint160(uint256(entries[i].topics[2]))), address(0x0000000000000000000000000000000000000001), "Event should contain correct referrer");
+        }
 
         assertEq(referralGraph.getReferrer(user1, testGroup), 0x0000000000000000000000000000000000000001);
         assertEq(referralGraph.getReferrer(user2, testGroup), 0x0000000000000000000000000000000000000001);
@@ -266,12 +277,12 @@ contract ReferralGraphTest is Test {
         vm.assume(user != address(0));
         vm.assume(referrer != address(0));
         vm.assume(user != referrer);
-        vm.assume(user != referralGraph.NULL_REFERRER());
-        vm.assume(referrer != referralGraph.NULL_REFERRER());
+        vm.assume(user != referralGraph.REFERRAL_ROOT());
+        vm.assume(referrer != referralGraph.REFERRAL_ROOT());
 
         vm.startPrank(oracle);
-        // First register the referrer with NULL_REFERRER
-        referralGraph.register(referrer, referralGraph.NULL_REFERRER(), groupId);
+        // First register the referrer with REFERRAL_ROOT
+        referralGraph.register(referrer, referralGraph.REFERRAL_ROOT(), groupId);
 
         // Now register user with referrer
         referralGraph.register(user, referrer, groupId);
@@ -295,22 +306,22 @@ contract ReferralGraphTest is Test {
             // Generate deterministic but unique addresses
             users[i] = address(uint160(uint256(keccak256(abi.encodePacked(groupId, i)))));
             vm.assume(users[i] != address(0));
-            vm.assume(users[i] != referralGraph.NULL_REFERRER());
+            vm.assume(users[i] != referralGraph.REFERRAL_ROOT());
         }
 
         vm.startPrank(oracle);
-        // Register all users with NULL_REFERRER
-        referralGraph.batchRegister(users, referralGraph.NULL_REFERRER(), groupId);
+        // Register all users with REFERRAL_ROOT
+        referralGraph.batchRegister(users, referralGraph.REFERRAL_ROOT(), groupId);
         vm.stopPrank();
 
         // Verify all users are registered
         for (uint256 i = 0; i < numUsers; i++) {
             assertTrue(referralGraph.isRegistered(users[i], groupId));
-            assertEq(referralGraph.getReferrer(users[i], groupId), referralGraph.NULL_REFERRER());
+            assertEq(referralGraph.getReferrer(users[i], groupId), referralGraph.REFERRAL_ROOT());
         }
 
-        // Verify NULL_REFERRER has all users as children
-        address[] memory children = referralGraph.getChildren(referralGraph.NULL_REFERRER(), groupId);
+        // Verify REFERRAL_ROOT has all users as children
+        address[] memory children = referralGraph.getChildren(referralGraph.REFERRAL_ROOT(), groupId);
         assertEq(children.length, numUsers);
     }
 
@@ -318,27 +329,26 @@ contract ReferralGraphTest is Test {
     function testFuzz_GetAncestorsRandomDepth(uint8 depth, bytes32 groupId) public {
         vm.assume(depth > 0 && depth <= 20);
 
-        // Build a chain of the specified depth ending with NULL_REFERRER
+        // Build a chain of the specified depth ending with REFERRAL_ROOT
+        // Start with REFERRAL_ROOT as the root
         address[] memory chain = new address[](depth + 1);
-
-        // Start with NULL_REFERRER as the root
-        chain[0] = referralGraph.NULL_REFERRER();
+        chain[0] = referralGraph.REFERRAL_ROOT();
 
         vm.startPrank(oracle);
         for (uint256 i = 1; i <= depth; i++) {
             chain[i] = address(uint160(uint256(keccak256(abi.encodePacked(groupId, i)))));
             vm.assume(chain[i] != address(0));
-            vm.assume(chain[i] != referralGraph.NULL_REFERRER());
+            vm.assume(chain[i] != referralGraph.REFERRAL_ROOT());
 
             // Register this user with previous user as referrer
             referralGraph.register(chain[i], chain[i - 1], groupId);
         }
         vm.stopPrank();
 
-        // Get ancestors for the last user (should not include NULL_REFERRER)
+        // Get ancestors for the last user (should not include REFERRAL_ROOT)
         address[] memory ancestors = referralGraph.getAncestors(chain[depth], groupId, depth + 10);
 
-        // Verify ancestors match expected chain (in reverse, excluding NULL_REFERRER)
+        // Verify ancestors match expected chain (in reverse, excluding REFERRAL_ROOT)
         assertEq(ancestors.length, depth - 1);
         for (uint256 i = 0; i < ancestors.length; i++) {
             assertEq(ancestors[i], chain[depth - 1 - i]);

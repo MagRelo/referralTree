@@ -8,8 +8,6 @@ import {IReferralGraph} from "./IReferralGraph.sol";
  * @notice Interface for the reward distribution contract with oracle-based chain rewards
  */
 interface IRewardDistributor {
-
-
     /// @notice Chain reward distribution data
     struct ChainRewardData {
         address user;           // User who triggered the event
@@ -37,7 +35,6 @@ interface IRewardDistributor {
         uint256[] amounts
     );
 
-
     /// @notice Error when oracle signature is invalid
     error InvalidOracleSignature();
 
@@ -53,25 +50,18 @@ interface IRewardDistributor {
     /// @notice Error when reward amount is zero
     error ZeroRewardAmount();
 
-
-
     /// @notice Get the referral graph contract
     /// @return Referral graph address
     function getReferralGraph() external view returns (IReferralGraph);
-
 
     /// @notice Get the percentage allocated to the original user
     /// @return Percentage in basis points (e.g., 8000 = 80%)
     function getOriginalUserPercentage() external view returns (uint256);
 
-
-
-
     /// @notice Check if a reward has been distributed
     /// @param rewardHash The hash of the reward data
     /// @return True if distributed
     function isRewardDistributed(bytes32 rewardHash) external view returns (bool);
-
 
     /// @notice Authorize an oracle to sign reward distributions
     /// @param oracle The oracle address to authorize
@@ -90,15 +80,9 @@ interface IRewardDistributor {
     /// @return Array of authorized oracle addresses
     function getAuthorizedOracles() external view returns (address[] memory);
 
-
     /// @notice Set the percentage allocated to the original user
     /// @param percentage Percentage in basis points (max 10000 = 100%)
     function setOriginalUserPercentage(uint256 percentage) external;
-
-
-
-
-
 
     /// @notice Distribute rewards across referral chain
     /// @param reward The chain reward data containing base amount for percentage calculations
@@ -106,4 +90,3 @@ interface IRewardDistributor {
     /// @dev Only distributes to referrers based on decay percentages, not the full totalAmount
     function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external;
 }
-
