@@ -21,8 +21,7 @@ interface IReferralGraph {
     /// @notice Error when user is already registered
     error AlreadyRegistered();
 
-    /// @notice Error when trying to create a cycle in referral graph
-    error CycleDetected();
+
 
     /// @notice Error when caller is not an authorized oracle
     error UnauthorizedOracle();

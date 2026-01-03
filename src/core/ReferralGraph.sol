@@ -7,7 +7,6 @@ import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
 /**
  * @title ReferralGraph
  * @notice Manages referral relationships in a tree structure
- * @dev Prevents cycles and enforces depth limits for security
  */
 contract ReferralGraph is IReferralGraph, Ownable {
     /// @notice Special address representing the root of all referral trees
@@ -121,25 +120,18 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @param groupId The group ID
     function _register(address user, address referrer, bytes32 groupId) internal {
         if (user == address(0)) revert InvalidReferrer();
-        if (_referrers[groupId][user] != address(0)) revert AlreadyRegistered();
         if (referrer == address(0)) revert InvalidReferrer(); // Must have referrer
-        if (referrer != address(0) && referrer == user) revert InvalidReferrer();
+        if (referrer == user) revert InvalidReferrer();
+        if (_referrers[groupId][user] != address(0)) revert AlreadyRegistered();
 
         // If referrer provided, they must be in the referral tree
         // Exception: root is always allowed as referrer if set (for first registration)
-        if (referrer != address(0) && referrer != REFERRAL_ROOT && !_isInReferralTree(referrer, groupId)) {
+        if (referrer != REFERRAL_ROOT && !_isInReferralTree(referrer, groupId)) {
             revert InvalidReferrer(); // Referrer must be in the group's referral tree
         }
 
-        // Prevent cycles by checking if referrer is in user's ancestor chain
-        if (_wouldCreateCycle(user, referrer, groupId)) {
-            revert CycleDetected();
-        }
-
         _referrers[groupId][user] = referrer;
-        if (referrer != address(0)) {
-            _children[groupId][referrer].push(user);
-        }
+        _children[groupId][referrer].push(user);
 
         emit UserRegistered(user, referrer);
     }
@@ -159,20 +151,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
         }
     }
 
-    /**
-     * @notice Check if registering user with referrer would create a cycle
-     * @param user The user being registered
-     * @param referrer The proposed referrer
-     * @return True if a cycle would be created
-     */
-    function _wouldCreateCycle(address user, address referrer, bytes32 groupId) internal view returns (bool) {
-        address current = referrer;
-        while (current != address(0)) {
-            if (current == user) return true;
-            current = _referrers[groupId][current];
-        }
-        return false;
-    }
+
 
     /// @inheritdoc IReferralGraph
     function authorizeOracle(address oracle) external onlyOwner {

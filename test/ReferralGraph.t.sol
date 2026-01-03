@@ -96,6 +96,18 @@ contract ReferralGraphTest is Test {
         referralGraph.register(user1, user1, testGroup);
     }
 
+    function testCannotRegisterZeroUser() public {
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.InvalidReferrer.selector);
+        referralGraph.register(address(0), user1, testGroup);
+    }
+
+    function testCannotRegisterZeroReferrer() public {
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.InvalidReferrer.selector);
+        referralGraph.register(user1, address(0), testGroup);
+    }
+
     function testReferrerMustBeInTree() public {
         // Try to register user2 with user1 as referrer, but user1 is not in the tree yet
         vm.prank(oracle);
