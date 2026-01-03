@@ -36,11 +36,12 @@ contract RewardCalculator {
             amounts[i] = totalReward * weights[i] / totalSum;
         }
 
-        // Adjust last amount to ensure exact sum (handles rounding)
+        // Distribute remainder to first position to maintain geometric decay
         uint256 calculatedSum = 0;
-        for (uint256 i = 0; i < numRecipients - 1; i++) {
+        for (uint256 i = 0; i < numRecipients; i++) {
             calculatedSum += amounts[i];
         }
-        amounts[numRecipients - 1] = totalReward - calculatedSum;
+        uint256 remainder = totalReward - calculatedSum;
+        amounts[0] += remainder;
     }
 }

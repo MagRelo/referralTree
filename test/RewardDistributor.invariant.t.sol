@@ -56,11 +56,10 @@ contract RewardDistributorInvariantTest is Test {
         targetContract(address(config));
         
         // Exclude owner-only functions
-        bytes4[] memory selectors = new bytes4[](4);
+        bytes4[] memory selectors = new bytes4[](3);
         selectors[0] = bytes4(keccak256("authorizeOracle(address)"));
         selectors[1] = bytes4(keccak256("unauthorizeOracle(address)"));
-        selectors[2] = bytes4(keccak256("setDecayConfig(uint8,uint256,uint256)"));
-        selectors[3] = bytes4(keccak256("setOriginalUserPercentage(uint256)"));
+        selectors[2] = bytes4(keccak256("setOriginalUserPercentage(uint256)"));
         
         excludeSelector(FuzzSelector({
             addr: address(config),

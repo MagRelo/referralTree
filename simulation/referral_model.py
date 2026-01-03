@@ -22,6 +22,10 @@ class DecayType(Enum):
     FIXED = "fixed"
 
 
+# NULL_REFERRER constant matching the smart contract
+NULL_REFERRER = 0x0000000000000000000000000000000000000001
+
+
 @dataclass
 class RewardEvent:
     """Represents a reward-triggering event in the simulation"""
@@ -111,8 +115,6 @@ class ReferralModel(mesa.Model):
         max_users: Maximum number of users in simulation
         max_referrals_per_step: Max referrals a user can make per step
         min_referral_delay: Minimum time before a user can refer others
-        reward_decay_type: Type of reward decay ('exponential', 'linear', 'fixed')
-        reward_decay_factor: Decay factor for rewards (basis points)
         min_reward: Minimum reward amount
         original_user_percentage: Percentage for original user (basis points)
     """
@@ -125,8 +127,6 @@ class ReferralModel(mesa.Model):
                  max_users=1000,
                  max_referrals_per_step=3,
                  min_referral_delay=5,
-                 reward_decay_type='exponential',
-                 reward_decay_factor=7000,  # 70%
                  min_reward=0.01,
                  original_user_percentage=8000):  # 80%
 
@@ -142,9 +142,7 @@ class ReferralModel(mesa.Model):
         self.min_referral_delay = min_referral_delay
         self.current_step = 0
 
-        # Reward parameters
-        self.reward_decay_type = DecayType(reward_decay_type) if isinstance(reward_decay_type, str) else reward_decay_type
-        self.reward_decay_factor = reward_decay_factor
+        # Reward parameters (fixed to match contract)
         self.min_reward = min_reward
         self.original_user_percentage = original_user_percentage
 
@@ -244,7 +242,7 @@ class ReferralModel(mesa.Model):
         self.reward_distribution_count += 1
 
     def _get_referral_chain(self, user_id: int) -> List[int]:
-        """Get the referral chain from user up to root (matches contract logic)"""
+        """Get the referral chain from user up to null referrer (matches contract logic)"""
         chain = []
         current_id = user_id
         visited = set()
@@ -261,9 +259,16 @@ class ReferralModel(mesa.Model):
                     current_id = agent.referrer_id
                     break
 
-            # Limit chain depth to prevent infinite loops
-            if len(chain) > 50:
+            # Stop if we hit null referrer or limit depth
+            if current_id == NULL_REFERRER:
+                chain.append(NULL_REFERRER)
                 break
+            elif len(chain) > 50:
+                break
+
+        # If chain doesn't end with null referrer, add it as ultimate root
+        if not chain or chain[-1] != NULL_REFERRER:
+            chain.append(NULL_REFERRER)
 
         return chain
 
@@ -272,67 +277,67 @@ class ReferralModel(mesa.Model):
         if not chain:
             return [], []
 
-        # Original user gets their percentage
+        # Find null referrer index (stop distribution before null referrer)
+        null_index = -1
+        for i, user_id in enumerate(chain):
+            if user_id == NULL_REFERRER:
+                null_index = i
+                break
+
+        # Determine num_recipients (exclude original user, cap at 10, stop at null referrer)
+        num_recipients = 0
+        if null_index == -1:
+            num_recipients = len(chain) - 1 if len(chain) > 1 else 0
+        else:
+            num_recipients = null_index - 1 if null_index > 1 else 0
+
+        if num_recipients > 10:
+            num_recipients = 10
+
+        # Original user gets 80%
         original_user_reward = (total_amount * self.original_user_percentage) / 10000
         remaining_for_chain = total_amount - original_user_reward
 
+        # Calculate chain rewards using geometric decay (0.6 ratio)
+        # Weights: [10000, 6000, 3600, 2160, 1296, 777, 466, 279, 167, 100]
+        weights = [10000, 6000, 3600, 2160, 1296, 777, 466, 279, 167, 100]
+        cum_sums = [0, 10000, 16000, 19600, 21760, 23056, 23833, 24299, 24578, 24745, 24845]
+
+        chain_amounts = []
+        if num_recipients > 0:
+            total_weight = cum_sums[num_recipients]
+            for i in range(num_recipients):
+                amount = (remaining_for_chain * weights[i]) // total_weight
+                chain_amounts.append(amount)
+
+            # Distribute remainder to first position to maintain geometric decay
+            calculated_sum = sum(chain_amounts)
+            remainder = remaining_for_chain - calculated_sum
+            chain_amounts[0] += remainder
+
+        # Build final arrays: original user + chain recipients
         recipients = [chain[0]]  # Original user
         amounts = [original_user_reward]
-
-        # Calculate rewards for referral chain (excluding original user)
-        num_referrers = len(chain) - 1  # chain[0] is original user
-        remaining_to_distribute = remaining_for_chain
-
-        for i in range(num_referrers):
-            if remaining_to_distribute < self.min_reward:
-                break  # Not enough left to distribute
-
-            # Calculate level reward based on decay type
-            level_reward = self._calculate_level_reward(remaining_to_distribute, i + 1)
-
-            # Ensure minimum reward and don't exceed remaining
-            if level_reward < self.min_reward:
-                level_reward = min(remaining_to_distribute, self.min_reward) if remaining_to_distribute >= self.min_reward else 0
-
-            if level_reward > 0 and level_reward <= remaining_to_distribute:
-                recipients.append(chain[i + 1])
-                amounts.append(level_reward)
-                remaining_to_distribute -= level_reward
-            else:
-                break
-
-        # Any remaining goes to "dust" (could be oracle/platform in real system)
-        if remaining_to_distribute > 0:
-            # For simulation, we could add a platform fee recipient
-            # For now, we'll just track it as distributed
-            pass
+        for i in range(num_recipients):
+            recipients.append(chain[i + 1])
+            amounts.append(chain_amounts[i])
 
         return recipients, amounts
 
     def _calculate_level_reward(self, base_amount: float, level: int) -> float:
-        """Calculate reward for a specific level using the configured decay function"""
-        if self.reward_decay_type == DecayType.LINEAR:
-            # Linear decay: reward = max(minReward, baseAmount * (1 - decayRate * level))
-            decay_amount = (base_amount * self.reward_decay_factor * level) / 10000
-            if decay_amount >= base_amount:
-                return self.min_reward
-            reward = base_amount - decay_amount
-            return max(reward, self.min_reward)
+        """Calculate reward for a specific level using geometric decay (0.6 ratio) matching contract"""
+        # Geometric weights for 0.6 decay ratio (basis points)
+        weights = [10000, 6000, 3600, 2160, 1296, 777, 466, 279, 167, 100]
+        cum_sums = [0, 10000, 16000, 19600, 21760, 23056, 23833, 24299, 24578, 24745, 24845]
 
-        elif self.reward_decay_type == DecayType.EXPONENTIAL:
-            # Exponential decay: each level gets decayFactor% of the previous level's reward
-            reward = base_amount
-            for i in range(level):
-                reward = (reward * self.reward_decay_factor) / 10000
-                if reward < self.min_reward:
-                    return self.min_reward
-            return reward
+        # Level 0 is first referrer, level 1 is second, etc.
+        if level >= len(weights):
+            return self.min_reward
 
-        elif self.reward_decay_type == DecayType.FIXED:
-            # Fixed amount per level
-            return max(self.reward_decay_factor, self.min_reward)
-
-        return self.min_reward  # Fallback
+        # For geometric decay, we need to know total recipients to normalize
+        # This is a simplified version - in practice, the contract calculates all at once
+        # For simulation, we'll approximate
+        return max((base_amount * weights[level]) // 10000, self.min_reward)
 
 
 def run_simulation(model_params, max_steps=100, n_runs=1):

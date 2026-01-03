@@ -29,21 +29,21 @@ contract RewardCalculatorTest is Test {
     function testCalculateRewardsThreeRecipients() public {
         uint256[] memory amounts = calculator.calculateRewards(1000, 3);
         assertEq(amounts.length, 3);
-        assertEq(amounts[0], 510);
+        assertEq(amounts[0], 511); // remainder added to first position
         assertEq(amounts[1], 306);
-        assertEq(amounts[2], 184);
+        assertEq(amounts[2], 183); // adjusted for exact sum
         assertEq(amounts[0] + amounts[1] + amounts[2], 1000);
     }
 
     function testCalculateRewardsSixRecipients() public {
         uint256[] memory amounts = calculator.calculateRewards(1000, 6);
         assertEq(amounts.length, 6);
-        assertEq(amounts[0], 419);
+        assertEq(amounts[0], 422); // remainder added to first position
         assertEq(amounts[1], 251);
         assertEq(amounts[2], 151);
         assertEq(amounts[3], 90);
         assertEq(amounts[4], 54);
-        assertEq(amounts[5], 35); // adjusted for exact sum
+        assertEq(amounts[5], 32); // no longer adjusted
         uint256 sum = 0;
         for (uint256 i = 0; i < 6; i++) {
             sum += amounts[i];

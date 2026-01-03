@@ -34,11 +34,9 @@ Use this table to evaluate if the simulation matches your use case. All paramete
 | | Referral Probability | 15% daily | 15% of engaged users refer daily | Match your observed referral rate | `referral_probability` |
 | | Churn Rate | 1% daily | ~70% retention over 3 months | Use your actual churn data | `churn_probability` |
 | **User Behavior** | Referral Delay | 5 days | Time to understand/learn product | Adjust for your onboarding time | `min_referral_delay` |
-| | Referral Limits | 3 per step | Prevent unrealistic growth | Set based on platform limits | `max_referrals_per_step` |
 | **Economic Events** | Purchase Probability | 2% daily | 2% of users trigger rewards daily | Match your transaction rate | `event_probability` in code |
 | | Purchase Amount | Log-normal μ=$7.39 | Realistic transaction distribution | Use your average order value | Distribution parameters |
-| | Reward Decay Type | Exponential | Front-load rewards to early users | Choose based on incentive goals | `reward_decay_type` |
-| | Decay Factor | 70% per level | 70% retention per referral level | Balance generosity vs. cost | `reward_decay_factor` |
+| | Reward Distribution | Geometric decay (0.6 ratio) | Fixed geometric decay matching contract | Rewards decrease by 40% per level | Fixed in contract logic |
 | | Original User Share | 80% | Trigger user gets 80% of rewards | Adjust based on economics | `original_user_percentage` |
 | | Minimum Reward | $0.05 | Smallest reward payment | Set transaction fee minimum | `min_reward` |
 | **Network Structure** | Max Users | 1,000 | Simulation capacity limit | Scale based on expected growth | `max_users` |
@@ -92,8 +90,8 @@ python scenario_test.py compare
 | **Aggressive** | 1.112 | ~2,000 | $8.50 | High-incentive campaigns |
 
 **Economic Insights**:
-- Exponential decay creates high inequality (Gini: 0.82)
-- Level 0 users earn 4x more than Level 1 users
+- Geometric decay (0.6 ratio) creates high inequality (Gini: 0.81)
+- Level 0 users earn 3-4x more than Level 1 users
 - 80% of rewards go to original purchasers
 - Viral growth requires 10-15% daily referral probability
 
@@ -122,8 +120,7 @@ python scenario_test.py compare
 model = ReferralModel(
     referral_probability=0.08,    # Lower engagement
     churn_probability=0.015,      # Higher churn
-    reward_decay_factor=6000,     # More aggressive decay
-    original_user_percentage=7500  # More rewards to purchasers
+    original_user_percentage=7500  # More rewards to purchasers (less to chain)
 )
 ```
 

@@ -31,8 +31,6 @@ SCENARIOS = {
             'max_users': 500,
             'max_referrals_per_step': 2,
             'min_referral_delay': 3,
-            'reward_decay_type': 'exponential',
-            'reward_decay_factor': 8000,   # 80% retention (slower decay)
             'min_reward': 0.01,
             'original_user_percentage': 8500,  # 85% (more generous)
         }
@@ -48,8 +46,6 @@ SCENARIOS = {
             'max_users': 1000,
             'max_referrals_per_step': 3,
             'min_referral_delay': 5,
-            'reward_decay_type': 'exponential',
-            'reward_decay_factor': 7000,   # 70% retention
             'min_reward': 0.05,
             'original_user_percentage': 8000,  # 80%
         }
@@ -65,8 +61,6 @@ SCENARIOS = {
             'max_users': 2000,
             'max_referrals_per_step': 5,
             'min_referral_delay': 3,
-            'reward_decay_type': 'exponential',
-            'reward_decay_factor': 6000,   # 60% retention (faster decay)
             'min_reward': 0.10,
             'original_user_percentage': 7500,  # 75% (less generous to encourage referrals)
         }

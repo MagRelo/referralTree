@@ -7,7 +7,7 @@ including reward distribution, costs, and incentives.
 """
 
 import sys
-from referral_model import ReferralModel, DecayType
+from referral_model import ReferralModel
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -25,8 +25,6 @@ def analyze_reward_distribution(scenario_name='moderate', steps=50):
             'max_users': 500,
             'max_referrals_per_step': 2,
             'min_referral_delay': 3,
-            'reward_decay_type': 'exponential',
-            'reward_decay_factor': 8000,
             'min_reward': 0.01,
             'original_user_percentage': 8500,
         },
@@ -38,8 +36,6 @@ def analyze_reward_distribution(scenario_name='moderate', steps=50):
             'max_users': 1000,
             'max_referrals_per_step': 3,
             'min_referral_delay': 5,
-            'reward_decay_type': 'exponential',
-            'reward_decay_factor': 7000,
             'min_reward': 0.05,
             'original_user_percentage': 8000,
         },
@@ -51,8 +47,6 @@ def analyze_reward_distribution(scenario_name='moderate', steps=50):
             'max_users': 2000,
             'max_referrals_per_step': 5,
             'min_referral_delay': 3,
-            'reward_decay_type': 'exponential',
-            'reward_decay_factor': 6000,
             'min_reward': 0.10,
             'original_user_percentage': 7500,
         }
@@ -62,7 +56,7 @@ def analyze_reward_distribution(scenario_name='moderate', steps=50):
     model = ReferralModel(**params)
 
     print(f"🧮 Analyzing {scenario_name.upper()} scenario economics")
-    print(f"📋 Parameters: decay_factor={params['reward_decay_factor']/100}%, min_reward=${params['min_reward']:.2f}")
+    print(f"📋 Parameters: min_reward=${params['min_reward']:.2f}, original_user_pct={params['original_user_percentage']/100}%")
 
     # Run simulation
     reward_events_over_time = []
