@@ -68,7 +68,7 @@ contract RewardDistributorTest is Test {
 
     function testCannotAuthorizeZeroOracle() public {
         vm.prank(owner);
-        vm.expectRevert(IRewardDistributor.InvalidParameters.selector);
+        vm.expectRevert(IRewardDistributor.InvalidOracleAddress.selector);
         config.authorizeOracle(address(0));
     }
 

@@ -15,13 +15,23 @@ interface IReferralGraph {
     /// @notice Emitted when an oracle is unauthorized
     event OracleUnauthorized(address indexed oracle);
 
-    /// @notice Error when trying to register with invalid referrer
-    error InvalidReferrer();
+    /// @notice Error when user address is invalid (zero address)
+    error InvalidUserAddress();
+
+    /// @notice Error when referrer address is invalid (zero address or not in tree)
+    error InvalidReferrerAddress();
+
+    /// @notice Error when oracle address is invalid (zero address)
+    error InvalidOracleAddress();
+
+    /// @notice Error when trying to refer oneself
+    error SelfReferralNotAllowed();
+
+    /// @notice Error when referrer is not in the referral tree
+    error ReferrerNotInTree();
 
     /// @notice Error when user is already registered
-    error AlreadyRegistered();
-
-
+    error UserAlreadyRegistered();
 
     /// @notice Error when caller is not an authorized oracle
     error UnauthorizedOracle();

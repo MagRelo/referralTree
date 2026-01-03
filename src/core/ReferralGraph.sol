@@ -112,15 +112,15 @@ contract ReferralGraph is IReferralGraph, Ownable {
     /// @param referrer The referrer address
     /// @param groupId The group ID
     function _register(address user, address referrer, bytes32 groupId) internal {
-        if (user == address(0)) revert InvalidReferrer();
-        if (referrer == address(0)) revert InvalidReferrer(); // Must have referrer
-        if (referrer == user) revert InvalidReferrer();
-        if (_referrers[groupId][user] != address(0)) revert AlreadyRegistered();
+        if (user == address(0)) revert InvalidUserAddress();
+        if (referrer == address(0)) revert InvalidReferrerAddress();
+        if (referrer == user) revert SelfReferralNotAllowed();
+        if (_referrers[groupId][user] != address(0)) revert UserAlreadyRegistered();
 
         // If referrer provided, they must be in the referral tree
         // Exception: root is always allowed as referrer if set (for first registration)
         if (referrer != REFERRAL_ROOT && !_isInReferralTree(referrer, groupId)) {
-            revert InvalidReferrer(); // Referrer must be in the group's referral tree
+            revert ReferrerNotInTree();
         }
 
         _referrers[groupId][user] = referrer;
@@ -154,7 +154,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
 
     /// @inheritdoc IReferralGraph
     function authorizeOracle(address oracle) external onlyOwner {
-        if (oracle == address(0)) revert InvalidReferrer();
+        if (oracle == address(0)) revert InvalidOracleAddress();
         if (!_authorizedOracles[oracle]) {
             _authorizedOracles[oracle] = true;
             _authorizedOraclesList.push(oracle);

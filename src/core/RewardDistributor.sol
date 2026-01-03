@@ -76,7 +76,7 @@ contract RewardDistributor is IRewardDistributor, Ownable {
 
     /// @inheritdoc IRewardDistributor
     function authorizeOracle(address oracle) external onlyOwner {
-        if (oracle == address(0)) revert InvalidParameters();
+        if (oracle == address(0)) revert InvalidOracleAddress();
         if (!_authorizedOracles[oracle]) {
             _authorizedOracles[oracle] = true;
             _authorizedOraclesList.push(oracle);
@@ -114,7 +114,7 @@ contract RewardDistributor is IRewardDistributor, Ownable {
 
     /// @inheritdoc IRewardDistributor
     function setOriginalUserPercentage(uint256 percentage) external onlyOwner {
-        if (percentage > 10000) revert InvalidParameters(); // Max 100%
+        if (percentage > 10000) revert InvalidPercentageValue();
         _originalUserPercentage = percentage;
     }
 

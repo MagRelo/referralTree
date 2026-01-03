@@ -35,6 +35,12 @@ interface IRewardDistributor {
         uint256[] amounts
     );
 
+    /// @notice Error when oracle address is invalid (zero address)
+    error InvalidOracleAddress();
+
+    /// @notice Error when percentage value is invalid (> 100%)
+    error InvalidPercentageValue();
+
     /// @notice Error when oracle signature is invalid
     error InvalidOracleSignature();
 

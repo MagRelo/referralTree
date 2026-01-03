@@ -86,32 +86,32 @@ contract ReferralGraphTest is Test {
         referralGraph.register(user1, 0x0000000000000000000000000000000000000001, testGroup);
 
         vm.prank(oracle);
-        vm.expectRevert(IReferralGraph.AlreadyRegistered.selector);
+        vm.expectRevert(IReferralGraph.UserAlreadyRegistered.selector);
         referralGraph.register(user1, user2, testGroup);
     }
 
     function testCannotRegisterWithSelf() public {
         vm.prank(oracle);
-        vm.expectRevert(IReferralGraph.InvalidReferrer.selector);
+        vm.expectRevert(IReferralGraph.SelfReferralNotAllowed.selector);
         referralGraph.register(user1, user1, testGroup);
     }
 
     function testCannotRegisterZeroUser() public {
         vm.prank(oracle);
-        vm.expectRevert(IReferralGraph.InvalidReferrer.selector);
+        vm.expectRevert(IReferralGraph.InvalidUserAddress.selector);
         referralGraph.register(address(0), user1, testGroup);
     }
 
     function testCannotRegisterZeroReferrer() public {
         vm.prank(oracle);
-        vm.expectRevert(IReferralGraph.InvalidReferrer.selector);
+        vm.expectRevert(IReferralGraph.InvalidReferrerAddress.selector);
         referralGraph.register(user1, address(0), testGroup);
     }
 
     function testReferrerMustBeInTree() public {
         // Try to register user2 with user1 as referrer, but user1 is not in the tree yet
         vm.prank(oracle);
-        vm.expectRevert(IReferralGraph.InvalidReferrer.selector);
+        vm.expectRevert(IReferralGraph.ReferrerNotInTree.selector);
         referralGraph.register(user2, user1, testGroup);
 
         // Register user1 first
@@ -133,7 +133,7 @@ contract ReferralGraphTest is Test {
 
         // Try to make user1 refer to user2 (creating a cycle)
         vm.prank(oracle);
-        vm.expectRevert(); // Just expect any revert
+        vm.expectRevert(IReferralGraph.UserAlreadyRegistered.selector);
         referralGraph.register(user1, user2, testGroup);
     }
 
@@ -369,10 +369,18 @@ contract ReferralGraphTest is Test {
 
     /// @notice Fuzz test: Cannot register with invalid addresses
     function testFuzz_CannotRegisterWithInvalidAddresses(address user, address referrer, bytes32 groupId) public {
-        // Test that zero addresses are rejected
-        if (user == address(0) || referrer == address(0)) {
+        // Test that zero user address is rejected
+        if (user == address(0)) {
             vm.prank(oracle);
-            vm.expectRevert();
+            vm.expectRevert(IReferralGraph.InvalidUserAddress.selector);
+            referralGraph.register(user, referrer, groupId);
+            return;
+        }
+
+        // Test that zero referrer address is rejected
+        if (referrer == address(0)) {
+            vm.prank(oracle);
+            vm.expectRevert(IReferralGraph.InvalidReferrerAddress.selector);
             referralGraph.register(user, referrer, groupId);
             return;
         }
@@ -380,7 +388,7 @@ contract ReferralGraphTest is Test {
         // Test that self-referral is rejected
         if (user == referrer) {
             vm.prank(oracle);
-            vm.expectRevert(IReferralGraph.InvalidReferrer.selector);
+            vm.expectRevert(IReferralGraph.SelfReferralNotAllowed.selector);
             referralGraph.register(user, referrer, groupId);
             return;
         }
