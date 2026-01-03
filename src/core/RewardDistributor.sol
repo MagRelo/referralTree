@@ -150,8 +150,8 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         // Get referral chain for the user in the group
         address[] memory chain = _getReferralChain(reward.user, reward.groupId);
 
-        // Calculate and distribute rewards across the chain
-        (address[] memory recipients, uint256[] memory amounts) = _calculateChainRewards(reward.totalAmount, chain, signer);
+        // Calculate rewards across the chain
+        (address[] memory recipients, uint256[] memory amounts) = _calculateChainRewards(reward.totalAmount, chain);
 
         // Transfer tokens to all recipients
         IERC20 rewardToken = IERC20(reward.rewardToken);
@@ -206,7 +206,7 @@ contract RewardDistributor is IRewardDistributor, Ownable {
      * @return amounts Array of reward amounts corresponding to recipients
      * @dev Distributes 80% to original user, remaining to chain using geometric decay
      */
-    function _calculateChainRewards(uint256 totalAmount, address[] memory chain, address /*dustRecipient*/)
+    function _calculateChainRewards(uint256 totalAmount, address[] memory chain)
         internal
         view
         returns (address[] memory recipients, uint256[] memory amounts)

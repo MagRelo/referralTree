@@ -42,6 +42,15 @@ contract ReferralGraph is IReferralGraph, Ownable {
         }
     }
 
+    /// @notice Check if a user is registered in a group
+    /// @param user The user to check
+    /// @param groupId The group ID
+    /// @return True if the user has a referrer in the group
+    function isRegistered(address user, bytes32 groupId) external view returns (bool) {
+        return _referrers[groupId][user] != address(0);
+    }
+
+
     /// @notice Get the referrer of a user in a group
     /// @param user The user to query
     /// @param groupId The group ID
@@ -87,14 +96,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
         return result;
     }
 
-    /// @notice Check if a user is registered in a group
-    /// @param user The user to check
-    /// @param groupId The group ID
-    /// @return True if the user has a referrer in the group
-    function isRegistered(address user, bytes32 groupId) external view returns (bool) {
-        return _referrers[groupId][user] != address(0);
-    }
-
     /// @notice Check if a user is in a group's referral tree
     /// @param user The user to check
     /// @param groupId The group ID
@@ -104,14 +105,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
         if (user == REFERRAL_ROOT && REFERRAL_ROOT != address(0)) return true;
         // User is in tree if they have been referred OR they have referred others
         return _referrers[groupId][user] != address(0) || _children[groupId][user].length > 0;
-    }
-
-    /// @notice Modifier to restrict functions to authorized oracles only
-    modifier onlyAuthorizedOracle() {
-        if (!_authorizedOracles[msg.sender]) {
-            revert UnauthorizedOracle();
-        }
-        _;
     }
 
     /// @notice Internal function to register a user with a referrer
@@ -136,6 +129,14 @@ contract ReferralGraph is IReferralGraph, Ownable {
         emit UserRegistered(user, referrer);
     }
 
+    /// @notice Modifier to restrict functions to authorized oracles only
+    modifier onlyAuthorizedOracle() {
+        if (!_authorizedOracles[msg.sender]) {
+            revert UnauthorizedOracle();
+        }
+        _;
+    }
+
     /// @inheritdoc IReferralGraph
     function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle {
         _register(user, referrer, groupId);
@@ -150,8 +151,6 @@ contract ReferralGraph is IReferralGraph, Ownable {
             _register(users[i], referrer, groupId);
         }
     }
-
-
 
     /// @inheritdoc IReferralGraph
     function authorizeOracle(address oracle) external onlyOwner {
