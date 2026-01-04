@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Owned} from "solmate/auth/Owned.sol";
 import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
 
 /**
  * @title ReferralGraph
  * @notice Manages referral relationships in a tree structure
  */
-contract ReferralGraph is IReferralGraph, Ownable {
+contract ReferralGraph is IReferralGraph, Owned {
     /// @notice Special address representing the root of all referral trees
     address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
@@ -32,7 +32,7 @@ contract ReferralGraph is IReferralGraph, Ownable {
     constructor(
         address initialOwner,
         address initialOracle
-    ) Ownable(initialOwner) {
+    ) Owned(initialOwner) {
 
         // If initial oracle is set, authorize it
         if (initialOracle != address(0)) {

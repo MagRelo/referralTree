@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Owned} from "solmate/auth/Owned.sol";
+import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
+import {ERC20} from "solmate/tokens/ERC20.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IRewardDistributor} from "../interfaces/IRewardDistributor.sol";
 import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
+import {IRewardDistributor} from "../interfaces/IRewardDistributor.sol";
 import {RewardCalculator} from "./RewardCalculator.sol";
 
 /**
@@ -14,7 +15,8 @@ import {RewardCalculator} from "./RewardCalculator.sol";
  * @notice Core reward distribution contract with oracle-based chain rewards
  * @dev Manages oracle integration and reward distribution across referral chains
  */
-contract RewardDistributor is IRewardDistributor, Ownable {
+contract RewardDistributor is IRewardDistributor, Owned {
+    using SafeTransferLib for address;
     using ECDSA for bytes32;
 
     /// @notice Special address representing the root of all referral trees
@@ -38,17 +40,17 @@ contract RewardDistributor is IRewardDistributor, Ownable {
     /// @notice Tracks distributed rewards to prevent double distribution
     mapping(bytes32 => bool) private _distributedRewards;
 
-    /**
-     * @notice Constructor
-     * @param initialOwner The initial owner of the contract
-     * @param _referralGraph Address of the referral graph contract
-     * @param initialOracle Initial oracle address to authorize
-     */
+     /**
+      * @notice Constructor
+      * @param initialOwner The initial owner of the contract
+      * @param _referralGraph Address of the referral graph contract
+      * @param initialOracle Initial oracle address to authorize
+      */
     constructor(
         address initialOwner,
         address _referralGraph,
         address initialOracle
-    ) Ownable(initialOwner) {
+    ) Owned(initialOwner) {
         referralGraph = IReferralGraph(_referralGraph);
         rewardCalculator = new RewardCalculator();
         if (initialOracle != address(0)) {
@@ -154,10 +156,9 @@ contract RewardDistributor is IRewardDistributor, Ownable {
         (address[] memory recipients, uint256[] memory amounts) = _calculateChainRewards(reward.totalAmount, chain);
 
         // Transfer tokens to all recipients
-        IERC20 rewardToken = IERC20(reward.rewardToken);
         for (uint256 i = 0; i < recipients.length; i++) {
             if (amounts[i] > 0) {
-                rewardToken.transfer(recipients[i], amounts[i]);
+                SafeTransferLib.safeTransfer(ERC20(reward.rewardToken), recipients[i], amounts[i]);
             }
         }
 
