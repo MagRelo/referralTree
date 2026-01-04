@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Owned} from "solmate/auth/Owned.sol";
+import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -15,7 +16,7 @@ import {RewardCalculator} from "./RewardCalculator.sol";
  * @notice Core reward distribution contract with oracle-based chain rewards
  * @dev Manages oracle integration and reward distribution across referral chains
  */
-contract RewardDistributor is IRewardDistributor, Owned {
+contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     using SafeTransferLib for address;
     using ECDSA for bytes32;
 
@@ -121,7 +122,7 @@ contract RewardDistributor is IRewardDistributor, Owned {
     }
 
     /// @inheritdoc IRewardDistributor
-    function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external {
+    function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external nonReentrant {
         // Validate reward data
         if (reward.totalAmount == 0) revert ZeroRewardAmount();
 
