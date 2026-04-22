@@ -35,9 +35,6 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     /// @notice List of authorized oracles for enumeration
     address[] private _authorizedOraclesList;
 
-    /// @notice Percentage for original user (basis points, default 80%)
-    uint256 private _originalUserPercentage;
-
     /// @notice Tracks distributed rewards to prevent double distribution
     mapping(bytes32 => bool) private _distributedRewards;
 
@@ -59,17 +56,11 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
             _authorizedOraclesList.push(initialOracle);
         }
 
-        _originalUserPercentage = 8000; // 80%
     }
 
     /// @inheritdoc IRewardDistributor
     function getReferralGraph() external view returns (IReferralGraph) {
         return referralGraph;
-    }
-
-    /// @inheritdoc IRewardDistributor
-    function getOriginalUserPercentage() external view returns (uint256) {
-        return _originalUserPercentage;
     }
 
     /// @inheritdoc IRewardDistributor
@@ -113,12 +104,6 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     /// @inheritdoc IRewardDistributor
     function getAuthorizedOracles() external view returns (address[] memory) {
         return _authorizedOraclesList;
-    }
-
-    /// @inheritdoc IRewardDistributor
-    function setOriginalUserPercentage(uint256 percentage) external onlyOwner {
-        if (percentage > 10000) revert InvalidPercentageValue();
-        _originalUserPercentage = percentage;
     }
 
     /// @inheritdoc IRewardDistributor
@@ -206,35 +191,28 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
      * @param chain Referral chain starting with the user who triggered the reward
      * @return recipients Array of addresses to receive rewards
      * @return amounts Array of reward amounts corresponding to recipients
-     * @dev Distributes 80% to original user, remaining to chain using geometric decay
+     * @dev Uses the triggering user to locate the chain and distributes full amount across that chain
      */
     function _calculateChainRewards(uint256 totalAmount, address[] memory chain)
         internal
         view
         returns (address[] memory recipients, uint256[] memory amounts)
     {
-        // Determine numRecipients (exclude original user, cap at 10)
-        // Chain already stops at REFERRAL_ROOT, so distribute to all ancestors (up to 10)
-        uint256 numRecipients = chain.length > 1 ? chain.length - 1 : 0;
+        // RewardCalculator supports up to 10 recipients
+        uint256 numRecipients = chain.length;
         if (numRecipients > 10) {
             numRecipients = 10;
         }
 
-        // Original user gets 80%
-        uint256 originalUserReward = (totalAmount * _originalUserPercentage) / 10000;
-        uint256 remainingForChain = totalAmount - originalUserReward;
+        // Calculate chain rewards using geometric decay over full totalAmount
+        uint256[] memory chainAmounts = rewardCalculator.calculateRewards(totalAmount, numRecipients);
 
-        // Calculate chain rewards using geometric decay
-        uint256[] memory chainAmounts = rewardCalculator.calculateRewards(remainingForChain, numRecipients);
-
-        // Build final arrays: original user + chain recipients
-        recipients = new address[](numRecipients + 1);
-        amounts = new uint256[](numRecipients + 1);
-        recipients[0] = chain[0];
-        amounts[0] = originalUserReward;
+        // Build final arrays with all chain recipients
+        recipients = new address[](numRecipients);
+        amounts = new uint256[](numRecipients);
         for (uint256 i = 0; i < numRecipients; i++) {
-            recipients[i + 1] = chain[i + 1];
-            amounts[i + 1] = chainAmounts[i];
+            recipients[i] = chain[i];
+            amounts[i] = chainAmounts[i];
         }
     }
 }

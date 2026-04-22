@@ -129,9 +129,9 @@ ChainRewardData memory reward = ChainRewardData({
 // Oracle signs and distributes
 bytes memory signature = signReward(reward, projectAOraclePrivateKey);
 /// @notice Distribute rewards across referral chain
-/// @param reward The chain reward data containing base amount for percentage calculations
+/// @param reward The chain reward data containing the bonus amount to distribute
 /// @param signature Oracle signature of the reward data
-/// @dev Distributes 80% to the original user and remaining 20% across the referral chain
+/// @dev Uses reward.user as chain entry point and distributes full totalAmount across chain recipients
 rewardDistributor.distributeChainRewards(reward, signature);
 ```
 
@@ -167,12 +167,7 @@ rewardDistributor.authorizeOracle(projectBOracle);
 
 **3. Configure Reward Distribution**
 
-Set the original user reward percentage (decay is fixed at geometric with 60% retention per level):
-
-```solidity
-// Set original user reward percentage (80%)
-rewardDistributor.setOriginalUserPercentage(8000);
-```
+No user-percentage configuration is needed. `totalAmount` is treated as the bonus pool and distributed through the referral chain using geometric decay.
 
 ## API Reference
 
@@ -202,11 +197,6 @@ rewardDistributor.setOriginalUserPercentage(8000);
 - `unauthorizeOracle(address oracle)` - Remove oracle authorization (owner only)
 - `isAuthorizedOracle(address oracle)` - Check oracle authorization
 - `getAuthorizedOracles()` - Get all authorized oracles
-
-#### Reward Configuration
-
-- `setOriginalUserPercentage(uint256 percentage)` - Set user reward percentage (owner only)
-- `getOriginalUserPercentage()` - Get user percentage
 
 #### Reward Distribution
 

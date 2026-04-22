@@ -56,10 +56,9 @@ contract RewardDistributorInvariantTest is Test {
         targetContract(address(config));
         
         // Exclude owner-only functions
-        bytes4[] memory selectors = new bytes4[](3);
+        bytes4[] memory selectors = new bytes4[](2);
         selectors[0] = bytes4(keccak256("authorizeOracle(address)"));
         selectors[1] = bytes4(keccak256("unauthorizeOracle(address)"));
-        selectors[2] = bytes4(keccak256("setOriginalUserPercentage(uint256)"));
         
         excludeSelector(FuzzSelector({
             addr: address(config),
@@ -149,17 +148,6 @@ contract RewardDistributorInvariantTest is Test {
         // The contract should prevent double distribution via isRewardDistributed check
         // This is more of a property test than an invariant, but it's important
     }
-
-    /// @notice Invariant: Original user percentage is always respected
-    function invariant_OriginalUserPercentageRespected() public view {
-        uint256 originalUserPercentage = config.getOriginalUserPercentage();
-        
-        // Percentage should be between 0 and 100%
-        assertLe(originalUserPercentage, 10000, "Original user percentage exceeds 100%");
-        assertGe(originalUserPercentage, 0, "Original user percentage cannot be negative");
-    }
-
-
 
     /// @notice Invariant: Contract token balance is always sufficient for pending distributions
     /// @dev This ensures the contract doesn't go into negative balance

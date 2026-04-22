@@ -11,7 +11,7 @@ interface IRewardDistributor {
     /// @notice Chain reward distribution data
     struct ChainRewardData {
         address user;           // User who triggered the event
-        uint256 totalAmount;    // Base amount from which referral percentages are calculated
+        uint256 totalAmount;    // Bonus amount to distribute across referral recipients
         address rewardToken;    // Token to distribute as rewards
         bytes32 groupId;        // User group for referral chain calculation
         bytes32 eventId;        // Unique event identifier
@@ -38,9 +38,6 @@ interface IRewardDistributor {
     /// @notice Error when oracle address is invalid (zero address)
     error InvalidOracleAddress();
 
-    /// @notice Error when percentage value is invalid (> 100%)
-    error InvalidPercentageValue();
-
     /// @notice Error when oracle signature is invalid
     error InvalidOracleSignature();
 
@@ -59,10 +56,6 @@ interface IRewardDistributor {
     /// @notice Get the referral graph contract
     /// @return Referral graph address
     function getReferralGraph() external view returns (IReferralGraph);
-
-    /// @notice Get the percentage allocated to the original user
-    /// @return Percentage in basis points (e.g., 8000 = 80%)
-    function getOriginalUserPercentage() external view returns (uint256);
 
     /// @notice Check if a reward has been distributed
     /// @param rewardHash The hash of the reward data
@@ -86,13 +79,9 @@ interface IRewardDistributor {
     /// @return Array of authorized oracle addresses
     function getAuthorizedOracles() external view returns (address[] memory);
 
-    /// @notice Set the percentage allocated to the original user
-    /// @param percentage Percentage in basis points (max 10000 = 100%)
-    function setOriginalUserPercentage(uint256 percentage) external;
-
     /// @notice Distribute rewards across referral chain
-    /// @param reward The chain reward data containing base amount for percentage calculations
+    /// @param reward The chain reward data containing bonus amount for chain distribution
     /// @param signature Oracle signature of the reward data
-    /// @dev Only distributes to referrers based on decay percentages, not the full totalAmount
+    /// @dev Uses `reward.user` as the chain entry point and distributes from full `totalAmount`
     function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external;
 }
