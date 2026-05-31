@@ -10,10 +10,10 @@ import {IReferralGraph} from "./IReferralGraph.sol";
 interface IRewardDistributor {
     /// @notice Chain reward distribution data
     struct ChainRewardData {
-        address user;           // User who triggered the event
+        address user;           // First referrer in the payout chain (largest share)
         uint256 totalAmount;    // Bonus amount to distribute across referral recipients
         address rewardToken;    // Token to distribute as rewards
-        bytes32 groupId;        // User group for referral chain calculation
+        bytes32 groupId;        // User group for referral chain lookup
         bytes32 eventId;        // Unique event identifier
         uint256 timestamp;      // When distribution was computed
         uint256 nonce;          // Prevents replay attacks
@@ -26,7 +26,11 @@ interface IRewardDistributor {
     event OracleUnauthorized(address indexed oracle);
 
     /// @notice Emitted when chain rewards are distributed
-    /// @dev totalAmount is the base amount, amounts array shows actual distributed amounts
+    /// @param user First referrer in the payout chain
+    /// @param totalAmount Total referral bonus distributed
+    /// @param eventId Unique event identifier from the signed reward data
+    /// @param recipients Addresses that received rewards, ordered from first referrer upward
+    /// @param amounts Reward amount for each entry in `recipients`
     event ChainRewardsDistributed(
         address indexed user,
         uint256 totalAmount,
@@ -79,9 +83,9 @@ interface IRewardDistributor {
     /// @return Array of authorized oracle addresses
     function getAuthorizedOracles() external view returns (address[] memory);
 
-    /// @notice Distribute rewards across referral chain
-    /// @param reward The chain reward data containing bonus amount for chain distribution
+    /// @notice Distribute rewards across a referral chain
+    /// @param reward The chain reward data
     /// @param signature Oracle signature of the reward data
-    /// @dev Uses `reward.user` as the chain entry point and distributes from full `totalAmount`
+    /// @dev Walks upward from `reward.user` through referrers and distributes full `totalAmount`
     function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external;
 }

@@ -11,10 +11,10 @@
 
 ## How It Works
 
-Imagine Alice refers Bob to your platform. Bob then refers Carol, and Carol refers Dave. When Dave earns a reward, **everyone up the referral chain gets rewarded**:
+Imagine Alice refers Bob to your platform. Bob then refers Carol, and Carol refers Dave. When a referral bonus is distributed with `user` set to Carol, **everyone from Carol up the referral chain gets rewarded**:
 
 ```
-Referral Tree:           Reward Distribution:
+Referral Tree:           Reward Distribution (user = Carol):
 
     User0                     User0 (11.38)
      │                        ▲
@@ -28,13 +28,12 @@ Referral Tree:           Reward Distribution:
    User3                    User3   (52.01)
      │                        ▲
      ▼                        │
-   User4                    User4   (86.68)
-     │                        ▲
-     ▼                        │
-   User5 (earn reward)      User5   (800.00)
+   User4 (Carol)            User4   (86.68)
+     │
+   User5 (Dave)
 ```
 
-**The reward pool flows upward** through the referral tree, with each level receiving a geometrically decreasing portion.
+**The reward pool flows upward** from the first referrer through the referral tree, with each level receiving a geometrically decreasing portion.
 
 ### Exponential Network Growth
 
@@ -57,18 +56,17 @@ Referral Tree (each person refers multiple users):
 
 **Exponential Growth:** If each user refers just 3 others, Alice could eventually earn referral income from hundreds of users in her network. Each person below Alice (Bob, Charlie, Diana) refers their own users, who then refer more users, creating a cascading effect where early adopters like Alice benefit from exponential network growth.
 
-### Example: Oracle grants 1000 tokens
+### Example: Oracle grants 1000 token referral bonus (`user` = User4)
 
-| Level    | User   | Amount | Cumulative |
-| -------- | ------ | ------ | ---------- |
-| Original | User5  | 800.00 | 800.00     |
-| Level 0  | User4  | 86.68  | 886.68     |
-| Level 1  | User3  | 52.01  | 938.69     |
-| Level 2  | User2  | 31.21  | 969.90     |
-| Level 3  | User1  | 18.72  | 988.62     |
-| Level 4  | User0  | 11.38  | 1000.00    |
+| Level | User  | Amount | Cumulative |
+| ----- | ----- | ------ | ---------- |
+| 0     | User4 | 434.06 | 434.06     |
+| 1     | User3 | 260.08 | 694.14     |
+| 2     | User2 | 156.05 | 850.19     |
+| 3     | User1 | 93.63  | 943.82     |
+| 4     | User0 | 56.18  | 1000.00    |
 
-**Total Distributed:** 1000.00 tokens (100% utilization)
+**Total Distributed:** 1000.00 tokens
 
 ### Group Incentives
 
@@ -115,12 +113,11 @@ Projects distribute rewards using their tokens:
 bytes32 eventId = keccak256(abi.encodePacked(user3, block.timestamp, "purchase"));
 bytes32 groupId = keccak256("project-a-users");
 
-// Project A's reward distribution
 ChainRewardData memory reward = ChainRewardData({
-    user: user3,              // User who triggered the event
-    totalAmount: 1000e18,     // Total reward amount
-    rewardToken: projectAToken, // Project A's token
-    groupId: groupId,         // Referral chain from this group
+    user: user2,              // First referrer in the payout chain
+    totalAmount: 1000e18,     // Referral bonus pool
+    rewardToken: projectAToken,
+    groupId: groupId,
     eventId: eventId,
     timestamp: block.timestamp,
     nonce: 1
@@ -128,10 +125,6 @@ ChainRewardData memory reward = ChainRewardData({
 
 // Oracle signs and distributes
 bytes memory signature = signReward(reward, projectAOraclePrivateKey);
-/// @notice Distribute rewards across referral chain
-/// @param reward The chain reward data containing the bonus amount to distribute
-/// @param signature Oracle signature of the reward data
-/// @dev Uses reward.user as chain entry point and distributes full totalAmount across chain recipients
 rewardDistributor.distributeChainRewards(reward, signature);
 ```
 
@@ -167,7 +160,7 @@ rewardDistributor.authorizeOracle(projectBOracle);
 
 **3. Configure Reward Distribution**
 
-No user-percentage configuration is needed. `totalAmount` is treated as the bonus pool and distributed through the referral chain using geometric decay.
+No configuration is needed. `totalAmount` is distributed upward from `user` using geometric decay.
 
 ## API Reference
 

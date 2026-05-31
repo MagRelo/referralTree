@@ -135,7 +135,7 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
         // Mark as distributed
         _distributedRewards[rewardHash] = true;
 
-        // Get referral chain for the user in the group
+        // Build payout chain upward from the first referrer
         address[] memory chain = _getReferralChain(reward.user, reward.groupId);
 
         // Calculate rewards across the chain
@@ -152,19 +152,17 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     }
 
     /**
-     * @notice Get the referral chain for a user (from user up the chain)
-     * @param user The user to get chain for
+     * @notice Get the payout chain starting from the first referrer
+     * @param user First referrer in the payout chain
      * @param groupId The group ID for the referral chain
-     * @return Array of addresses in the referral chain (including the user)
-     * @dev Only builds the chain needed for reward distribution (max 11 addresses: user + 10 ancestors)
+     * @return Array of addresses to pay, starting with `user` and continuing up through referrers
+     * @dev Up to 11 addresses: first referrer plus 10 upstream referrers
      */
     function _getReferralChain(address user, bytes32 groupId) internal view returns (address[] memory) {
-        // We only pay up to 10 ancestors + original user = 11 total
         address[] memory chain = new address[](11);
         uint256 length = 0;
 
         address current = user;
-        // Include the original user
         chain[length++] = current;
 
         // Add up to 10 ancestors, stopping at REFERRAL_ROOT or end of chain
@@ -188,10 +186,10 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     /**
      * @notice Calculate reward distribution across a referral chain
      * @param totalAmount Total amount to distribute
-     * @param chain Referral chain starting with the user who triggered the reward
+     * @param chain Payout chain starting with the first referrer
      * @return recipients Array of addresses to receive rewards
      * @return amounts Array of reward amounts corresponding to recipients
-     * @dev Uses the triggering user to locate the chain and distributes full amount across that chain
+     * @dev Distributes full `totalAmount` across the chain using geometric decay
      */
     function _calculateChainRewards(uint256 totalAmount, address[] memory chain)
         internal
