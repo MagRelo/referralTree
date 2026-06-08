@@ -8,6 +8,7 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
 import {IRewardDistributor} from "../interfaces/IRewardDistributor.sol";
 import {RewardCalculator} from "./RewardCalculator.sol";
+import {SignatureLib} from "../utils/SignatureLib.sol";
 
 /**
  * @title RewardDistributor
@@ -104,20 +105,10 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
         return _authorizedOraclesList[groupId];
     }
 
-    /// @notice Check that the caller is authorized for the given group
-    function _requireAuthorizedOracle(bytes32 groupId) internal view {
-        if (!_authorizedOracles[groupId][msg.sender]) {
-            revert UnauthorizedOracle();
-        }
-    }
-
     /// @inheritdoc IRewardDistributor
-    function distributeChainRewards(ChainRewardData calldata reward) external nonReentrant {
-        _requireAuthorizedOracle(reward.groupId);
-        // Validate reward data
+    function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external nonReentrant {
         if (reward.totalAmount == 0) revert ZeroRewardAmount();
 
-        // Create reward hash for uniqueness check
         bytes32 rewardHash = keccak256(
             abi.encodePacked(
                 reward.user,
@@ -128,8 +119,11 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
             )
         );
 
-        // Check if already distributed
         if (_distributedRewards[rewardHash]) revert RewardAlreadyDistributed();
+
+        bytes32 messageHash = SignatureLib.toEthSignedMessageHash(rewardHash);
+        address signer = SignatureLib.recover(messageHash, signature);
+        if (!_authorizedOracles[reward.groupId][signer]) revert InvalidOracleSignature();
 
         // Mark as distributed
         _distributedRewards[rewardHash] = true;

@@ -121,9 +121,17 @@ ChainRewardData memory reward = ChainRewardData({
     eventId: eventId
 });
 
-// Oracle distributes directly
-rewardDistributor.distributeChainRewards(reward);
+// Any contract can relay the call; oracle signs off-chain
+bytes32 rewardHash = keccak256(
+    abi.encodePacked(reward.user, reward.totalAmount, reward.rewardToken, reward.groupId, reward.eventId)
+);
+bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", rewardHash));
+bytes memory signature = signWithOracleKey(messageHash);
+
+rewardDistributor.distributeChainRewards(reward, signature);
 ```
+
+The recovered signer must be authorized for `reward.groupId`. Registration still requires the oracle to call `register` directly.
 
 ## Initial Setup
 
@@ -193,7 +201,7 @@ No configuration is needed. `totalAmount` is distributed upward from `user` usin
 
 #### Reward Distribution
 
-- `distributeChainRewards(ChainRewardData reward)` - Distribute rewards (oracle must be authorized for `reward.groupId`)
+- `distributeChainRewards(ChainRewardData reward, bytes signature)` - Distribute rewards (signer must be authorized for `reward.groupId`; callable by any address)
 
 ## Development
 

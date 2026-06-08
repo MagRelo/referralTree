@@ -80,7 +80,7 @@ forge verify-contract <address> src/core/ReferralGraph.sol:ReferralGraph --ether
 #### Imports
 ```solidity
 // Group imports by external libraries first, then local imports
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Owned} from "solmate/auth/Owned.sol";
 import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
 
 // Separate groups with blank lines
@@ -91,14 +91,14 @@ import {Test} from "forge-std/Test.sol";
 ```solidity
 pragma solidity ^0.8.20;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Owned} from "solmate/auth/Owned.sol";
 
 /**
  * @title ContractName
  * @notice Brief description of contract purpose
  * @dev Detailed implementation notes
  */
-contract ContractName is IInterface, Ownable {
+contract ContractName is IInterface, Owned {
     // State variables (private with public getters)
     mapping(address => uint256) private _balances;
 
@@ -106,7 +106,7 @@ contract ContractName is IInterface, Ownable {
     event BalanceUpdated(address indexed user, uint256 newBalance);
 
     // Constructor
-    constructor(address initialOwner) Ownable(initialOwner) {}
+    constructor(address initialOwner) Owned(initialOwner) {}
 
     // Public/external functions
     function updateBalance(address user, uint256 amount) external onlyOwner {
@@ -227,8 +227,8 @@ function invariant_NoCyclesInReferralTree() public {
 
 #### remappings.txt
 ```
-@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
 forge-std/=lib/forge-std/src/
+solmate/=lib/solmate/src/
 ```
 
 ## Development Workflow

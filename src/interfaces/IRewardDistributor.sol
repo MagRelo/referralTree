@@ -40,8 +40,8 @@ interface IRewardDistributor {
     /// @notice Error when oracle address is invalid (zero address)
     error InvalidOracleAddress();
 
-    /// @notice Error when caller is not an authorized oracle
-    error UnauthorizedOracle();
+    /// @notice Error when oracle signature is invalid or signer is not authorized for the group
+    error InvalidOracleSignature();
 
     /// @notice Error when reward has already been distributed
     error RewardAlreadyDistributed();
@@ -87,6 +87,7 @@ interface IRewardDistributor {
 
     /// @notice Distribute rewards across a referral chain
     /// @param reward The chain reward data
-    /// @dev Only authorized oracles may call. Walks upward from `reward.user` through referrers and distributes full `totalAmount`
-    function distributeChainRewards(ChainRewardData calldata reward) external;
+    /// @param signature Oracle signature over the reward hash (EIP-191)
+    /// @dev Callable by any address. Signer must be authorized for `reward.groupId`. Walks upward from `reward.user` through referrers and distributes full `totalAmount`
+    function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external;
 }
