@@ -130,30 +130,33 @@ rewardDistributor.distributeChainRewards(reward);
 **1. Deploy Contracts**
 
 ```bash
-# Deploy shared referral graph (with optional initial oracle)
-forge create src/core/ReferralGraph.sol:ReferralGraph --constructor-args <owner> <initialOracle>
+# Deploy shared referral graph (with optional initial oracle for a specific group)
+forge create src/core/ReferralGraph.sol:ReferralGraph --constructor-args <owner> <initialOracle> <initialGroupId>
 
 # Deploy shared reward distributor
-forge create src/core/RewardDistributor.sol:RewardDistributor --constructor-args <owner> <referralGraph> <initialOracle>
+forge create src/core/RewardDistributor.sol:RewardDistributor --constructor-args <owner> <referralGraph> <initialOracle> <initialGroupId>
 ```
+
+Pass `address(0)` for `initialOracle` and `bytes32(0)` for `initialGroupId` to skip constructor-time authorization and authorize oracles after deployment.
 
 **2. Authorize Project Oracles**
 
-**Important:** Registration of referrals is restricted to authorized oracles only. You must authorize oracles in both contracts:
+**Important:** Registration and reward distribution are restricted to authorized oracles. Authorization is **per group** — an oracle authorized for Project A cannot act on Project B unless explicitly authorized there too. You must authorize oracles in both contracts:
 
 ```solidity
-// Authorize Project A's oracle in ReferralGraph (for registration)
-referralGraph.authorizeOracle(projectAOracle);
+bytes32 projectAGroupId = keccak256("project-a-users");
+bytes32 projectBGroupId = keccak256("project-b-users");
 
-// Authorize Project A's oracle in RewardDistributor (for reward distribution)
-rewardDistributor.authorizeOracle(projectAOracle);
+// Authorize Project A's oracle for Project A's group only
+referralGraph.authorizeOracle(projectAOracle, projectAGroupId);
+rewardDistributor.authorizeOracle(projectAOracle, projectAGroupId);
 
-// Authorize Project B's oracle
-referralGraph.authorizeOracle(projectBOracle);
-rewardDistributor.authorizeOracle(projectBOracle);
+// Authorize Project B's oracle for Project B's group only
+referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
+rewardDistributor.authorizeOracle(projectBOracle, projectBGroupId);
 ```
 
-**Note:** Typically, you'll authorize the same oracles in both contracts for consistency.
+**Note:** Typically, you'll authorize the same oracles in both contracts for the same group. The same oracle address can be authorized for multiple groups independently.
 
 **3. Configure Reward Distribution**
 
@@ -170,10 +173,10 @@ No configuration is needed. `totalAmount` is distributed upward from `user` usin
 
 #### Oracle Management
 
-- `authorizeOracle(address oracle)` - Authorize an oracle to register referrals (owner only)
-- `unauthorizeOracle(address oracle)` - Remove oracle authorization (owner only)
-- `isAuthorizedOracle(address oracle)` - Check if an address is an authorized oracle
-- `getAuthorizedOracles()` - Get all authorized oracles
+- `authorizeOracle(address oracle, bytes32 groupId)` - Authorize an oracle to register referrals in a group (owner only)
+- `unauthorizeOracle(address oracle, bytes32 groupId)` - Remove oracle authorization for a group (owner only)
+- `isAuthorizedOracle(address oracle, bytes32 groupId)` - Check if an oracle is authorized for a group
+- `getAuthorizedOracles(bytes32 groupId)` - Get all authorized oracles for a group
 - `getReferrer(address user, bytes32 groupId)` - Get referrer in group
 - `getChildren(address referrer, bytes32 groupId)` - Get referrals in group
 - `getAncestors(address user, bytes32 groupId, uint256 maxLevels)` - Get referral chain
@@ -183,14 +186,14 @@ No configuration is needed. `totalAmount` is distributed upward from `user` usin
 
 #### Oracle Management
 
-- `authorizeOracle(address oracle)` - Authorize new oracle (owner only)
-- `unauthorizeOracle(address oracle)` - Remove oracle authorization (owner only)
-- `isAuthorizedOracle(address oracle)` - Check oracle authorization
-- `getAuthorizedOracles()` - Get all authorized oracles
+- `authorizeOracle(address oracle, bytes32 groupId)` - Authorize an oracle to distribute rewards in a group (owner only)
+- `unauthorizeOracle(address oracle, bytes32 groupId)` - Remove oracle authorization for a group (owner only)
+- `isAuthorizedOracle(address oracle, bytes32 groupId)` - Check if an oracle is authorized for a group
+- `getAuthorizedOracles(bytes32 groupId)` - Get all authorized oracles for a group
 
 #### Reward Distribution
 
-- `distributeChainRewards(ChainRewardData reward)` - Distribute rewards (oracle-only)
+- `distributeChainRewards(ChainRewardData reward)` - Distribute rewards (oracle must be authorized for `reward.groupId`)
 
 ## Development
 

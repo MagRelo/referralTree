@@ -147,7 +147,7 @@ contract ContractName is IInterface, Ownable {
 ```solidity
 require(amount > 0, "Amount must be greater than zero");
 require(user != address(0), "Invalid user address");
-require(isAuthorizedOracle(msg.sender), "Unauthorized oracle");
+require(_authorizedOracles[groupId][msg.sender], "Unauthorized oracle");
 ```
 
 ### Testing Patterns
@@ -262,17 +262,24 @@ forge-std/=lib/forge-std/src/
 ## Common Patterns
 
 ### Oracle Authorization Pattern
+Oracle authorization is scoped per `groupId`. An oracle authorized for one group cannot register referrals or distribute rewards in another.
+
 ```solidity
-modifier onlyAuthorizedOracle() {
-    require(isAuthorizedOracle(msg.sender), "Unauthorized oracle");
+mapping(bytes32 => mapping(address => bool)) private _authorizedOracles;
+mapping(bytes32 => address[]) private _authorizedOraclesList;
+
+modifier onlyAuthorizedOracle(bytes32 groupId) {
+    require(_authorizedOracles[groupId][msg.sender], "Unauthorized oracle");
     _;
 }
 
-function authorizeOracle(address oracle) external onlyOwner {
+function authorizeOracle(address oracle, bytes32 groupId) external onlyOwner {
     require(oracle != address(0), "Invalid oracle address");
-    _authorizedOracles[oracle] = true;
-    _authorizedOraclesList.push(oracle);
-    emit OracleAuthorized(oracle);
+    if (!_authorizedOracles[groupId][oracle]) {
+        _authorizedOracles[groupId][oracle] = true;
+        _authorizedOraclesList[groupId].push(oracle);
+        emit OracleAuthorized(groupId, oracle);
+    }
 }
 ```
 

@@ -18,27 +18,27 @@ contract ReferralGraph is IReferralGraph, Owned {
     /// @notice Maps group -> referrer -> children
     mapping(bytes32 => mapping(address => address[])) private _children;
 
-    /// @notice Authorized oracle addresses that can register referrals
-    mapping(address => bool) private _authorizedOracles;
+    /// @notice Authorized oracle addresses per group that can register referrals
+    mapping(bytes32 => mapping(address => bool)) private _authorizedOracles;
 
-    /// @notice List of authorized oracles for enumeration
-    address[] private _authorizedOraclesList;
+    /// @notice List of authorized oracles per group for enumeration
+    mapping(bytes32 => address[]) private _authorizedOraclesList;
 
      /**
       * @notice Constructor
       * @param initialOwner The initial owner of the contract
       * @param initialOracle Initial oracle address to authorize (optional, can be address(0))
+      * @param initialGroupId Group to authorize the initial oracle for
       */
     constructor(
         address initialOwner,
-        address initialOracle
+        address initialOracle,
+        bytes32 initialGroupId
     ) Owned(initialOwner) {
-
-        // If initial oracle is set, authorize it
         if (initialOracle != address(0)) {
-            _authorizedOracles[initialOracle] = true;
-            _authorizedOraclesList.push(initialOracle);
-            emit OracleAuthorized(initialOracle);
+            _authorizedOracles[initialGroupId][initialOracle] = true;
+            _authorizedOraclesList[initialGroupId].push(initialOracle);
+            emit OracleAuthorized(initialGroupId, initialOracle);
         }
     }
 
@@ -129,16 +129,16 @@ contract ReferralGraph is IReferralGraph, Owned {
         emit UserRegistered(user, referrer);
     }
 
-    /// @notice Modifier to restrict functions to authorized oracles only
-    modifier onlyAuthorizedOracle() {
-        if (!_authorizedOracles[msg.sender]) {
+    /// @notice Modifier to restrict functions to oracles authorized for a group
+    modifier onlyAuthorizedOracle(bytes32 groupId) {
+        if (!_authorizedOracles[groupId][msg.sender]) {
             revert UnauthorizedOracle();
         }
         _;
     }
 
     /// @inheritdoc IReferralGraph
-    function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle {
+    function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle(groupId) {
         _register(user, referrer, groupId);
     }
 
@@ -146,47 +146,50 @@ contract ReferralGraph is IReferralGraph, Owned {
     /// @param users Array of users to register
     /// @param referrer The referrer for all users
     /// @param groupId The group ID
-    function batchRegister(address[] calldata users, address referrer, bytes32 groupId) external onlyAuthorizedOracle {
+    function batchRegister(address[] calldata users, address referrer, bytes32 groupId)
+        external
+        onlyAuthorizedOracle(groupId)
+    {
         for (uint256 i = 0; i < users.length; i++) {
             _register(users[i], referrer, groupId);
         }
     }
 
     /// @inheritdoc IReferralGraph
-    function authorizeOracle(address oracle) external onlyOwner {
+    function authorizeOracle(address oracle, bytes32 groupId) external onlyOwner {
         if (oracle == address(0)) revert InvalidOracleAddress();
-        if (!_authorizedOracles[oracle]) {
-            _authorizedOracles[oracle] = true;
-            _authorizedOraclesList.push(oracle);
-            emit OracleAuthorized(oracle);
+        if (!_authorizedOracles[groupId][oracle]) {
+            _authorizedOracles[groupId][oracle] = true;
+            _authorizedOraclesList[groupId].push(oracle);
+            emit OracleAuthorized(groupId, oracle);
         }
     }
 
     /// @inheritdoc IReferralGraph
-    function unauthorizeOracle(address oracle) external onlyOwner {
-        if (_authorizedOracles[oracle]) {
-            _authorizedOracles[oracle] = false;
+    function unauthorizeOracle(address oracle, bytes32 groupId) external onlyOwner {
+        if (_authorizedOracles[groupId][oracle]) {
+            _authorizedOracles[groupId][oracle] = false;
 
-            // Remove from list
-            for (uint256 i = 0; i < _authorizedOraclesList.length; i++) {
-                if (_authorizedOraclesList[i] == oracle) {
-                    _authorizedOraclesList[i] = _authorizedOraclesList[_authorizedOraclesList.length - 1];
-                    _authorizedOraclesList.pop();
+            address[] storage oracles = _authorizedOraclesList[groupId];
+            for (uint256 i = 0; i < oracles.length; i++) {
+                if (oracles[i] == oracle) {
+                    oracles[i] = oracles[oracles.length - 1];
+                    oracles.pop();
                     break;
                 }
             }
 
-            emit OracleUnauthorized(oracle);
+            emit OracleUnauthorized(groupId, oracle);
         }
     }
 
     /// @inheritdoc IReferralGraph
-    function isAuthorizedOracle(address oracle) external view returns (bool) {
-        return _authorizedOracles[oracle];
+    function isAuthorizedOracle(address oracle, bytes32 groupId) external view returns (bool) {
+        return _authorizedOracles[groupId][oracle];
     }
 
     /// @inheritdoc IReferralGraph
-    function getAuthorizedOracles() external view returns (address[] memory) {
-        return _authorizedOraclesList;
+    function getAuthorizedOracles(bytes32 groupId) external view returns (address[] memory) {
+        return _authorizedOraclesList[groupId];
     }
 }

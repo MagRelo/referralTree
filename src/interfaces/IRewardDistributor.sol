@@ -17,11 +17,11 @@ interface IRewardDistributor {
         bytes32 eventId;        // Unique event identifier
     }
 
-    /// @notice Emitted when an oracle is authorized
-    event OracleAuthorized(address indexed oracle);
+    /// @notice Emitted when an oracle is authorized for a group
+    event OracleAuthorized(bytes32 indexed groupId, address indexed oracle);
 
-    /// @notice Emitted when an oracle is unauthorized
-    event OracleUnauthorized(address indexed oracle);
+    /// @notice Emitted when an oracle is unauthorized for a group
+    event OracleUnauthorized(bytes32 indexed groupId, address indexed oracle);
 
     /// @notice Emitted when chain rewards are distributed
     /// @param user First referrer in the payout chain
@@ -64,22 +64,26 @@ interface IRewardDistributor {
     /// @return True if distributed
     function isRewardDistributed(bytes32 rewardHash) external view returns (bool);
 
-    /// @notice Authorize an oracle to distribute rewards
+    /// @notice Authorize an oracle to distribute rewards in a group
     /// @param oracle The oracle address to authorize
-    function authorizeOracle(address oracle) external;
+    /// @param groupId The group the oracle is authorized for
+    function authorizeOracle(address oracle, bytes32 groupId) external;
 
-    /// @notice Unauthorize an oracle
+    /// @notice Unauthorize an oracle for a group
     /// @param oracle The oracle address to unauthorize
-    function unauthorizeOracle(address oracle) external;
+    /// @param groupId The group to remove authorization from
+    function unauthorizeOracle(address oracle, bytes32 groupId) external;
 
-    /// @notice Check if an address is an authorized oracle
+    /// @notice Check if an address is an authorized oracle for a group
     /// @param oracle The address to check
-    /// @return True if authorized
-    function isAuthorizedOracle(address oracle) external view returns (bool);
+    /// @param groupId The group to check authorization for
+    /// @return True if authorized for the group
+    function isAuthorizedOracle(address oracle, bytes32 groupId) external view returns (bool);
 
-    /// @notice Get all authorized oracles
-    /// @return Array of authorized oracle addresses
-    function getAuthorizedOracles() external view returns (address[] memory);
+    /// @notice Get all authorized oracles for a group
+    /// @param groupId The group to query
+    /// @return Array of authorized oracle addresses for the group
+    function getAuthorizedOracles(bytes32 groupId) external view returns (address[] memory);
 
     /// @notice Distribute rewards across a referral chain
     /// @param reward The chain reward data

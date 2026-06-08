@@ -10,13 +10,8 @@ contract MockReferralGraph is IReferralGraph {
     mapping(address => address[]) private _children;
 
 
-    mapping(address => bool) private _authorizedOracles;
-    address[] private _authorizedOraclesList;
-
-    constructor() {
-        // In mock, authorize address(0) as default oracle to allow any caller
-        _authorizedOracles[address(0)] = true;
-    }
+    mapping(bytes32 => mapping(address => bool)) private _authorizedOracles;
+    mapping(bytes32 => address[]) private _authorizedOraclesList;
 
     function setReferrer(address user, address referrer) external {
         _referrers[user] = referrer;
@@ -142,34 +137,34 @@ contract MockReferralGraph is IReferralGraph {
 
 
 
-    function authorizeOracle(address oracle) external {
-        if (!_authorizedOracles[oracle]) {
-            _authorizedOracles[oracle] = true;
-            _authorizedOraclesList.push(oracle);
-            emit OracleAuthorized(oracle);
+    function authorizeOracle(address oracle, bytes32 groupId) external {
+        if (!_authorizedOracles[groupId][oracle]) {
+            _authorizedOracles[groupId][oracle] = true;
+            _authorizedOraclesList[groupId].push(oracle);
+            emit OracleAuthorized(groupId, oracle);
         }
     }
 
-    function unauthorizeOracle(address oracle) external {
-        if (_authorizedOracles[oracle]) {
-            _authorizedOracles[oracle] = false;
-            for (uint256 i = 0; i < _authorizedOraclesList.length; i++) {
-                if (_authorizedOraclesList[i] == oracle) {
-                    _authorizedOraclesList[i] = _authorizedOraclesList[_authorizedOraclesList.length - 1];
-                    _authorizedOraclesList.pop();
+    function unauthorizeOracle(address oracle, bytes32 groupId) external {
+        if (_authorizedOracles[groupId][oracle]) {
+            _authorizedOracles[groupId][oracle] = false;
+            address[] storage oracles = _authorizedOraclesList[groupId];
+            for (uint256 i = 0; i < oracles.length; i++) {
+                if (oracles[i] == oracle) {
+                    oracles[i] = oracles[oracles.length - 1];
+                    oracles.pop();
                     break;
                 }
             }
-            emit OracleUnauthorized(oracle);
+            emit OracleUnauthorized(groupId, oracle);
         }
     }
 
-    function isAuthorizedOracle(address /* oracle */) external pure returns (bool) {
-        // In mock, allow any caller (for testing simplicity)
+    function isAuthorizedOracle(address /* oracle */, bytes32 /* groupId */) external pure returns (bool) {
         return true;
     }
 
-    function getAuthorizedOracles() external view returns (address[] memory) {
-        return _authorizedOraclesList;
+    function getAuthorizedOracles(bytes32 groupId) external view returns (address[] memory) {
+        return _authorizedOraclesList[groupId];
     }
 }

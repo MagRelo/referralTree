@@ -40,7 +40,7 @@ contract RewardDistributorTest is Test {
 
         // Deploy config contract
         vm.prank(owner);
-        config = new RewardDistributor(owner, address(referralGraph), oracleSigner);
+        config = new RewardDistributor(owner, address(referralGraph), oracleSigner, testGroup);
 
         // Mint tokens to config contract (large amount for fuzz tests)
         platformToken.mint(address(config), type(uint256).max / 2); // Very large amount to avoid balance limits
@@ -53,7 +53,7 @@ contract RewardDistributorTest is Test {
     }
 
     function testInitialSetup() public {
-        assertTrue(config.isAuthorizedOracle(oracleSigner));
+        assertTrue(config.isAuthorizedOracle(oracleSigner, testGroup));
         assertEq(address(config.getReferralGraph()), address(referralGraph));
     }
 
@@ -61,15 +61,15 @@ contract RewardDistributorTest is Test {
         address newOracle = address(8);
 
         vm.prank(owner);
-        config.authorizeOracle(newOracle);
+        config.authorizeOracle(newOracle, testGroup);
 
-        assertTrue(config.isAuthorizedOracle(newOracle));
+        assertTrue(config.isAuthorizedOracle(newOracle, testGroup));
     }
 
     function testCannotAuthorizeZeroOracle() public {
         vm.prank(owner);
         vm.expectRevert(IRewardDistributor.InvalidOracleAddress.selector);
-        config.authorizeOracle(address(0));
+        config.authorizeOracle(address(0), testGroup);
     }
 
     function testDistributeChainRewards() public {
@@ -144,7 +144,24 @@ contract RewardDistributorTest is Test {
     function testOnlyOwnerCanConfigure() public {
         vm.prank(user1);
         vm.expectRevert();
-        config.authorizeOracle(address(8));
+        config.authorizeOracle(address(8), testGroup);
+    }
+
+    function testCannotDistributeInUnauthorizedGroup() public {
+        bytes32 otherGroup = keccak256("other-group");
+        bytes32 eventId = keccak256("test-event");
+
+        IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
+            user: user3,
+            totalAmount: 1000 ether,
+            rewardToken: address(platformToken),
+            groupId: otherGroup,
+            eventId: eventId
+        });
+
+        vm.prank(oracleSigner);
+        vm.expectRevert(IRewardDistributor.UnauthorizedOracle.selector);
+        config.distributeChainRewards(reward);
     }
 
     function testRewardDistributionStopsAtMinReward() public {

@@ -34,7 +34,7 @@ contract RewardDistributorInvariantTest is Test {
 
         // Deploy config contract
         vm.prank(owner);
-        config = new RewardDistributor(owner, address(referralGraph), oracleSigner);
+        config = new RewardDistributor(owner, address(referralGraph), oracleSigner, TEST_GROUP);
 
         // Mint large amount of tokens to contract
         contractInitialBalance = 10000000 ether;
@@ -54,8 +54,8 @@ contract RewardDistributorInvariantTest is Test {
 
         // Exclude owner-only functions
         bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = bytes4(keccak256("authorizeOracle(address)"));
-        selectors[1] = bytes4(keccak256("unauthorizeOracle(address)"));
+        selectors[0] = bytes4(keccak256("authorizeOracle(address,bytes32)"));
+        selectors[1] = bytes4(keccak256("unauthorizeOracle(address,bytes32)"));
 
         excludeSelector(FuzzSelector({addr: address(config), selectors: selectors}));
     }
@@ -124,11 +124,11 @@ contract RewardDistributorInvariantTest is Test {
 
     /// @notice Invariant: Oracle authorization state is consistent
     function invariant_OracleAuthorizationConsistent() public view {
-        address[] memory oracles = config.getAuthorizedOracles();
+        address[] memory oracles = config.getAuthorizedOracles(TEST_GROUP);
 
         // Verify each oracle in the list is actually authorized
         for (uint256 i = 0; i < oracles.length; i++) {
-            assertTrue(config.isAuthorizedOracle(oracles[i]), "Oracle in list should be authorized");
+            assertTrue(config.isAuthorizedOracle(oracles[i], TEST_GROUP), "Oracle in list should be authorized");
         }
 
         // Verify no duplicates in oracle list

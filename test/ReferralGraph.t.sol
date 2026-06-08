@@ -19,11 +19,11 @@ contract ReferralGraphTest is Test {
 
     function setUp() public {
         vm.prank(owner);
-        referralGraph = new ReferralGraph(owner, address(0));
+        referralGraph = new ReferralGraph(owner, address(0), bytes32(0));
 
-        // Authorize oracle for registration
+        // Authorize oracle for registration in test group
         vm.prank(owner);
-        referralGraph.authorizeOracle(oracle);
+        referralGraph.authorizeOracle(oracle, testGroup);
         // Groups are auto-created on first registration - no setup needed
     }
 
@@ -211,9 +211,9 @@ contract ReferralGraphTest is Test {
         
         // Owner can authorize oracle
         vm.prank(owner);
-        referralGraph.authorizeOracle(newOracle);
+        referralGraph.authorizeOracle(newOracle, testGroup);
         
-        assertTrue(referralGraph.isAuthorizedOracle(newOracle));
+        assertTrue(referralGraph.isAuthorizedOracle(newOracle, testGroup));
         
         // New oracle can now register
         vm.prank(newOracle);
@@ -224,9 +224,9 @@ contract ReferralGraphTest is Test {
     function testUnauthorizeOracle() public {
         // Unauthorize the oracle
         vm.prank(owner);
-        referralGraph.unauthorizeOracle(oracle);
+        referralGraph.unauthorizeOracle(oracle, testGroup);
         
-        assertFalse(referralGraph.isAuthorizedOracle(oracle));
+        assertFalse(referralGraph.isAuthorizedOracle(oracle, testGroup));
         
         // Oracle can no longer register
         vm.prank(oracle);
@@ -239,12 +239,12 @@ contract ReferralGraphTest is Test {
         address newOracle2 = address(9);
         
         vm.prank(owner);
-        referralGraph.authorizeOracle(newOracle1);
+        referralGraph.authorizeOracle(newOracle1, testGroup);
         
         vm.prank(owner);
-        referralGraph.authorizeOracle(newOracle2);
+        referralGraph.authorizeOracle(newOracle2, testGroup);
         
-        address[] memory oracles = referralGraph.getAuthorizedOracles();
+        address[] memory oracles = referralGraph.getAuthorizedOracles(testGroup);
         assertEq(oracles.length, 3); // oracle + newOracle1 + newOracle2
         assertTrue(oracles.length >= 3);
     }
@@ -254,26 +254,37 @@ contract ReferralGraphTest is Test {
         
         vm.prank(user1);
         vm.expectRevert();
-        referralGraph.authorizeOracle(newOracle);
+        referralGraph.authorizeOracle(newOracle, testGroup);
     }
 
     function testOnlyOwnerCanUnauthorizeOracle() public {
         vm.prank(user1);
         vm.expectRevert();
-        referralGraph.unauthorizeOracle(oracle);
+        referralGraph.unauthorizeOracle(oracle, testGroup);
+    }
+
+    function testOracleNotAuthorizedForOtherGroup() public {
+        bytes32 otherGroup = keccak256("other-group");
+
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.UnauthorizedOracle.selector);
+        referralGraph.register(user1, 0x0000000000000000000000000000000000000001, otherGroup);
+
+        vm.prank(owner);
+        referralGraph.authorizeOracle(oracle, otherGroup);
+
+        vm.prank(oracle);
+        referralGraph.register(user1, 0x0000000000000000000000000000000000000001, otherGroup);
+        assertTrue(referralGraph.isRegistered(user1, otherGroup));
     }
 
     function testConstructorWithInitialOracle() public {
         address initialOracle = address(10);
 
         vm.prank(owner);
-        ReferralGraph newGraph = new ReferralGraph(owner, address(0));
+        ReferralGraph newGraph = new ReferralGraph(owner, initialOracle, testGroup);
 
-        // Manually authorize the oracle
-        vm.prank(owner);
-        newGraph.authorizeOracle(initialOracle);
-
-        assertTrue(newGraph.isAuthorizedOracle(initialOracle));
+        assertTrue(newGraph.isAuthorizedOracle(initialOracle, testGroup));
 
         // Initial oracle can register
         vm.prank(initialOracle);
@@ -291,6 +302,9 @@ contract ReferralGraphTest is Test {
         vm.assume(user != referrer);
         vm.assume(user != referralGraph.REFERRAL_ROOT());
         vm.assume(referrer != referralGraph.REFERRAL_ROOT());
+
+        vm.prank(owner);
+        referralGraph.authorizeOracle(oracle, groupId);
 
         vm.startPrank(oracle);
         // First register the referrer with REFERRAL_ROOT
@@ -321,6 +335,9 @@ contract ReferralGraphTest is Test {
             vm.assume(users[i] != referralGraph.REFERRAL_ROOT());
         }
 
+        vm.prank(owner);
+        referralGraph.authorizeOracle(oracle, groupId);
+
         vm.startPrank(oracle);
         // Register all users with REFERRAL_ROOT
         referralGraph.batchRegister(users, referralGraph.REFERRAL_ROOT(), groupId);
@@ -346,13 +363,17 @@ contract ReferralGraphTest is Test {
         address[] memory chain = new address[](depth + 1);
         chain[0] = referralGraph.REFERRAL_ROOT();
 
-        vm.startPrank(oracle);
         for (uint256 i = 1; i <= depth; i++) {
             chain[i] = address(uint160(uint256(keccak256(abi.encodePacked(groupId, i)))));
             vm.assume(chain[i] != address(0));
             vm.assume(chain[i] != referralGraph.REFERRAL_ROOT());
+        }
 
-            // Register this user with previous user as referrer
+        vm.prank(owner);
+        referralGraph.authorizeOracle(oracle, groupId);
+
+        vm.startPrank(oracle);
+        for (uint256 i = 1; i <= depth; i++) {
             referralGraph.register(chain[i], chain[i - 1], groupId);
         }
         vm.stopPrank();

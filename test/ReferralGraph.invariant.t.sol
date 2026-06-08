@@ -23,18 +23,18 @@ contract ReferralGraphInvariantTest is Test {
 
     function setUp() public {
         vm.prank(owner);
-        referralGraph = new ReferralGraph(owner, address(0));
+        referralGraph = new ReferralGraph(owner, address(0), bytes32(0));
 
         vm.prank(owner);
-        referralGraph.authorizeOracle(oracle);
+        referralGraph.authorizeOracle(oracle, TEST_GROUP);
         
         // Target the referral graph contract for invariant testing
         targetContract(address(referralGraph));
         
         // Exclude owner-only functions from fuzzing
         bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = bytes4(keccak256("authorizeOracle(address)"));
-        selectors[1] = bytes4(keccak256("unauthorizeOracle(address)"));
+        selectors[0] = bytes4(keccak256("authorizeOracle(address,bytes32)"));
+        selectors[1] = bytes4(keccak256("unauthorizeOracle(address,bytes32)"));
 
         excludeSelector(FuzzSelector({
             addr: address(referralGraph),

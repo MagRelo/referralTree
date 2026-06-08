@@ -26,11 +26,11 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     /// @notice Reward calculator contract
     RewardCalculator public immutable rewardCalculator;
 
-    /// @notice Authorized oracle addresses that can sign rewards
-    mapping(address => bool) private _authorizedOracles;
+    /// @notice Authorized oracle addresses per group that can distribute rewards
+    mapping(bytes32 => mapping(address => bool)) private _authorizedOracles;
 
-    /// @notice List of authorized oracles for enumeration
-    address[] private _authorizedOraclesList;
+    /// @notice List of authorized oracles per group for enumeration
+    mapping(bytes32 => address[]) private _authorizedOraclesList;
 
     /// @notice Tracks distributed rewards to prevent double distribution
     mapping(bytes32 => bool) private _distributedRewards;
@@ -40,19 +40,20 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
       * @param initialOwner The initial owner of the contract
       * @param _referralGraph Address of the referral graph contract
       * @param initialOracle Initial oracle address to authorize
+      * @param initialGroupId Group to authorize the initial oracle for
       */
     constructor(
         address initialOwner,
         address _referralGraph,
-        address initialOracle
+        address initialOracle,
+        bytes32 initialGroupId
     ) Owned(initialOwner) {
         referralGraph = IReferralGraph(_referralGraph);
         rewardCalculator = new RewardCalculator();
         if (initialOracle != address(0)) {
-            _authorizedOracles[initialOracle] = true;
-            _authorizedOraclesList.push(initialOracle);
+            _authorizedOracles[initialGroupId][initialOracle] = true;
+            _authorizedOraclesList[initialGroupId].push(initialOracle);
         }
-
     }
 
     /// @inheritdoc IRewardDistributor
@@ -66,53 +67,53 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     }
 
     /// @inheritdoc IRewardDistributor
-    function authorizeOracle(address oracle) external onlyOwner {
+    function authorizeOracle(address oracle, bytes32 groupId) external onlyOwner {
         if (oracle == address(0)) revert InvalidOracleAddress();
-        if (!_authorizedOracles[oracle]) {
-            _authorizedOracles[oracle] = true;
-            _authorizedOraclesList.push(oracle);
-            emit OracleAuthorized(oracle);
+        if (!_authorizedOracles[groupId][oracle]) {
+            _authorizedOracles[groupId][oracle] = true;
+            _authorizedOraclesList[groupId].push(oracle);
+            emit OracleAuthorized(groupId, oracle);
         }
     }
 
     /// @inheritdoc IRewardDistributor
-    function unauthorizeOracle(address oracle) external onlyOwner {
-        if (_authorizedOracles[oracle]) {
-            _authorizedOracles[oracle] = false;
+    function unauthorizeOracle(address oracle, bytes32 groupId) external onlyOwner {
+        if (_authorizedOracles[groupId][oracle]) {
+            _authorizedOracles[groupId][oracle] = false;
 
-            // Remove from list
-            for (uint256 i = 0; i < _authorizedOraclesList.length; i++) {
-                if (_authorizedOraclesList[i] == oracle) {
-                    _authorizedOraclesList[i] = _authorizedOraclesList[_authorizedOraclesList.length - 1];
-                    _authorizedOraclesList.pop();
+            address[] storage oracles = _authorizedOraclesList[groupId];
+            for (uint256 i = 0; i < oracles.length; i++) {
+                if (oracles[i] == oracle) {
+                    oracles[i] = oracles[oracles.length - 1];
+                    oracles.pop();
                     break;
                 }
             }
 
-            emit OracleUnauthorized(oracle);
+            emit OracleUnauthorized(groupId, oracle);
         }
     }
 
     /// @inheritdoc IRewardDistributor
-    function isAuthorizedOracle(address oracle) external view returns (bool) {
-        return _authorizedOracles[oracle];
+    function isAuthorizedOracle(address oracle, bytes32 groupId) external view returns (bool) {
+        return _authorizedOracles[groupId][oracle];
     }
 
     /// @inheritdoc IRewardDistributor
-    function getAuthorizedOracles() external view returns (address[] memory) {
-        return _authorizedOraclesList;
+    function getAuthorizedOracles(bytes32 groupId) external view returns (address[] memory) {
+        return _authorizedOraclesList[groupId];
     }
 
-    /// @notice Modifier to restrict functions to authorized oracles only
-    modifier onlyAuthorizedOracle() {
-        if (!_authorizedOracles[msg.sender]) {
+    /// @notice Check that the caller is authorized for the given group
+    function _requireAuthorizedOracle(bytes32 groupId) internal view {
+        if (!_authorizedOracles[groupId][msg.sender]) {
             revert UnauthorizedOracle();
         }
-        _;
     }
 
     /// @inheritdoc IRewardDistributor
-    function distributeChainRewards(ChainRewardData calldata reward) external onlyAuthorizedOracle nonReentrant {
+    function distributeChainRewards(ChainRewardData calldata reward) external nonReentrant {
+        _requireAuthorizedOracle(reward.groupId);
         // Validate reward data
         if (reward.totalAmount == 0) revert ZeroRewardAmount();
 
