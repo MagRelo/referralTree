@@ -110,7 +110,7 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 Projects distribute rewards using their tokens:
 
 ```solidity
-bytes32 eventId = keccak256(abi.encodePacked(user3, block.timestamp, "purchase"));
+bytes32 eventId = keccak256(abi.encodePacked(user3, "purchase"));
 bytes32 groupId = keccak256("project-a-users");
 
 ChainRewardData memory reward = ChainRewardData({
@@ -118,14 +118,11 @@ ChainRewardData memory reward = ChainRewardData({
     totalAmount: 1000e18,     // Referral bonus pool
     rewardToken: projectAToken,
     groupId: groupId,
-    eventId: eventId,
-    timestamp: block.timestamp,
-    nonce: 1
+    eventId: eventId
 });
 
-// Oracle signs and distributes
-bytes memory signature = signReward(reward, projectAOraclePrivateKey);
-rewardDistributor.distributeChainRewards(reward, signature);
+// Oracle distributes directly
+rewardDistributor.distributeChainRewards(reward);
 ```
 
 ## Initial Setup
@@ -193,7 +190,7 @@ No configuration is needed. `totalAmount` is distributed upward from `user` usin
 
 #### Reward Distribution
 
-- `distributeChainRewards(ChainRewardData reward, bytes signature)` - Distribute rewards
+- `distributeChainRewards(ChainRewardData reward)` - Distribute rewards (oracle-only)
 
 ## Development
 

@@ -15,8 +15,6 @@ interface IRewardDistributor {
         address rewardToken;    // Token to distribute as rewards
         bytes32 groupId;        // User group for referral chain lookup
         bytes32 eventId;        // Unique event identifier
-        uint256 timestamp;      // When distribution was computed
-        uint256 nonce;          // Prevents replay attacks
     }
 
     /// @notice Emitted when an oracle is authorized
@@ -42,8 +40,8 @@ interface IRewardDistributor {
     /// @notice Error when oracle address is invalid (zero address)
     error InvalidOracleAddress();
 
-    /// @notice Error when oracle signature is invalid
-    error InvalidOracleSignature();
+    /// @notice Error when caller is not an authorized oracle
+    error UnauthorizedOracle();
 
     /// @notice Error when reward has already been distributed
     error RewardAlreadyDistributed();
@@ -66,7 +64,7 @@ interface IRewardDistributor {
     /// @return True if distributed
     function isRewardDistributed(bytes32 rewardHash) external view returns (bool);
 
-    /// @notice Authorize an oracle to sign reward distributions
+    /// @notice Authorize an oracle to distribute rewards
     /// @param oracle The oracle address to authorize
     function authorizeOracle(address oracle) external;
 
@@ -85,7 +83,6 @@ interface IRewardDistributor {
 
     /// @notice Distribute rewards across a referral chain
     /// @param reward The chain reward data
-    /// @param signature Oracle signature of the reward data
-    /// @dev Walks upward from `reward.user` through referrers and distributes full `totalAmount`
-    function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external;
+    /// @dev Only authorized oracles may call. Walks upward from `reward.user` through referrers and distributes full `totalAmount`
+    function distributeChainRewards(ChainRewardData calldata reward) external;
 }

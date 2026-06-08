@@ -15,14 +15,13 @@ contract RewardDistributorInvariantTest is Test {
     RewardDistributor public config;
     MockERC20 public platformToken;
     MockReferralGraph public referralGraph;
-    
+
     address public owner = address(1);
     address public root = address(8);
-    uint256 public constant ORACLE_PRIVATE_KEY = 0x1234;
-    address public oracleSigner;
-    
+    address public oracleSigner = address(2);
+
     bytes32 public constant TEST_GROUP = keccak256("invariant-test-group");
-    
+
     // Track distributed rewards
     mapping(bytes32 => bool) private distributedRewards;
     uint256 private totalDistributedAmount;
@@ -32,87 +31,62 @@ contract RewardDistributorInvariantTest is Test {
         // Create mock contracts
         platformToken = new MockERC20("Platform Token", "PT", 18);
         referralGraph = new MockReferralGraph();
-        
-        oracleSigner = vm.addr(ORACLE_PRIVATE_KEY);
-        
+
         // Deploy config contract
         vm.prank(owner);
         config = new RewardDistributor(owner, address(referralGraph), oracleSigner);
-        
+
         // Mint large amount of tokens to contract
         contractInitialBalance = 10000000 ether;
         platformToken.mint(address(config), contractInitialBalance);
-        
+
         // Set up a simple referral chain for testing
         address user1 = address(0x100);
         address user2 = address(0x200);
         address user3 = address(0x300);
-        
+
         referralGraph.setReferrer(user1, root);
         referralGraph.setReferrer(user2, user1);
         referralGraph.setReferrer(user3, user2);
-        
+
         // Target the reward distributor contract
         targetContract(address(config));
-        
+
         // Exclude owner-only functions
         bytes4[] memory selectors = new bytes4[](2);
         selectors[0] = bytes4(keccak256("authorizeOracle(address)"));
         selectors[1] = bytes4(keccak256("unauthorizeOracle(address)"));
-        
-        excludeSelector(FuzzSelector({
-            addr: address(config),
-            selectors: selectors
-        }));
+
+        excludeSelector(FuzzSelector({addr: address(config), selectors: selectors}));
     }
 
     /// @notice Helper function to distribute rewards (called by fuzzer via targetContract)
     /// @dev This will be called by Foundry's invariant fuzzer
-    function distributeReward(
-        address user,
-        uint256 totalAmount,
-        bytes32 eventId,
-        uint256 timestamp,
-        uint256 nonce
-    ) public {
+    function distributeReward(address user, uint256 totalAmount, bytes32 eventId) public {
         // Filter invalid inputs
         if (totalAmount == 0) return;
         if (totalAmount > contractInitialBalance) return;
         if (user == address(0)) return;
-        
+
         // Create reward data
         IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
             user: user,
             totalAmount: totalAmount,
             rewardToken: address(platformToken),
             groupId: TEST_GROUP,
-            eventId: eventId,
-            timestamp: timestamp,
-            nonce: nonce
+            eventId: eventId
         });
-        
+
         bytes32 rewardHash = keccak256(
-            abi.encodePacked(
-                reward.user,
-                reward.totalAmount,
-                reward.rewardToken,
-                reward.groupId,
-                reward.eventId,
-                reward.timestamp,
-                reward.nonce
-            )
+            abi.encodePacked(reward.user, reward.totalAmount, reward.rewardToken, reward.groupId, reward.eventId)
         );
-        
+
         // Skip if already distributed
         if (distributedRewards[rewardHash]) return;
-        
-        // Sign the reward
-        bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", rewardHash));
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ORACLE_PRIVATE_KEY, messageHash);
-        bytes memory signature = abi.encodePacked(r, s, v);
-        
-        // Try to distribute
-        try config.distributeChainRewards(reward, signature) {
+
+        // Try to distribute as authorized oracle
+        vm.prank(oracleSigner);
+        try config.distributeChainRewards(reward) {
             distributedRewards[rewardHash] = true;
             totalDistributedAmount += totalAmount;
         } catch {
@@ -126,27 +100,13 @@ contract RewardDistributorInvariantTest is Test {
     /// @dev This ensures no tokens are created out of thin air
     function invariant_RewardsNeverExceedInput() public view {
         uint256 contractBalance = platformToken.balanceOf(address(config));
-        uint256 expectedBalance = contractInitialBalance;
-        
-        // Calculate how much should have been distributed
-        // Note: This is a simplified check - in reality, we'd need to track each distribution
-        // But the key invariant is: contract balance + distributed = initial balance
-        // Since we can't easily track all distributed amounts, we check that:
-        // 1. Contract balance is non-negative
-        // 2. No single distribution exceeds its input
-        
+
         assertGe(contractBalance, 0, "Contract balance cannot be negative");
     }
 
     /// @notice Invariant: Each reward can only be distributed once
     function invariant_NoDoubleDistribution() public view {
-        // This is enforced by the contract's _distributedRewards mapping
-        // We verify by checking that isRewardDistributed returns consistent results
-        // This invariant is primarily tested through the contract's own logic
-        // but we can verify the mapping is working correctly
-        
-        // The contract should prevent double distribution via isRewardDistributed check
-        // This is more of a property test than an invariant, but it's important
+        // Enforced by the contract's _distributedRewards mapping
     }
 
     /// @notice Invariant: Contract token balance is always sufficient for pending distributions
@@ -159,39 +119,23 @@ contract RewardDistributorInvariantTest is Test {
     /// @notice Invariant: Reward distribution preserves token conservation
     /// @dev For any distribution, sum of all recipient balances increase = totalAmount (or less due to rounding)
     function invariant_TokenConservation() public view {
-        // This is a complex invariant that would require tracking all distributions
-        // In practice, we test this through fuzz tests that verify:
-        // - Total distributed <= total input
-        // - Contract balance decreases by exactly what was distributed
-        
-        // The key insight: if we track a distribution, the contract balance should decrease
-        // by at most the totalAmount (could be less if some rewards are below minReward threshold)
-        
-        // This invariant is best tested through property-based tests rather than
-        // stateful invariants, which is why we have the fuzz tests
+        // Best tested through property-based fuzz tests
     }
 
     /// @notice Invariant: Oracle authorization state is consistent
     function invariant_OracleAuthorizationConsistent() public view {
         address[] memory oracles = config.getAuthorizedOracles();
-        
+
         // Verify each oracle in the list is actually authorized
         for (uint256 i = 0; i < oracles.length; i++) {
-            assertTrue(
-                config.isAuthorizedOracle(oracles[i]),
-                "Oracle in list should be authorized"
-            );
+            assertTrue(config.isAuthorizedOracle(oracles[i]), "Oracle in list should be authorized");
         }
-        
+
         // Verify no duplicates in oracle list
         for (uint256 i = 0; i < oracles.length; i++) {
             for (uint256 j = i + 1; j < oracles.length; j++) {
-                assertTrue(
-                    oracles[i] != oracles[j],
-                    "Duplicate oracle in list"
-                );
+                assertTrue(oracles[i] != oracles[j], "Duplicate oracle in list");
             }
         }
     }
 }
-

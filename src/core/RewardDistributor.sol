@@ -5,8 +5,6 @@ import {Owned} from "solmate/auth/Owned.sol";
 import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
 import {IRewardDistributor} from "../interfaces/IRewardDistributor.sol";
 import {RewardCalculator} from "./RewardCalculator.sol";
@@ -18,7 +16,6 @@ import {RewardCalculator} from "./RewardCalculator.sol";
  */
 contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     using SafeTransferLib for address;
-    using ECDSA for bytes32;
 
     /// @notice Special address representing the root of all referral trees
     address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
@@ -106,8 +103,16 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
         return _authorizedOraclesList;
     }
 
+    /// @notice Modifier to restrict functions to authorized oracles only
+    modifier onlyAuthorizedOracle() {
+        if (!_authorizedOracles[msg.sender]) {
+            revert UnauthorizedOracle();
+        }
+        _;
+    }
+
     /// @inheritdoc IRewardDistributor
-    function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external nonReentrant {
+    function distributeChainRewards(ChainRewardData calldata reward) external onlyAuthorizedOracle nonReentrant {
         // Validate reward data
         if (reward.totalAmount == 0) revert ZeroRewardAmount();
 
@@ -118,19 +123,12 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
                 reward.totalAmount,
                 reward.rewardToken,
                 reward.groupId,
-                reward.eventId,
-                reward.timestamp,
-                reward.nonce
+                reward.eventId
             )
         );
 
         // Check if already distributed
         if (_distributedRewards[rewardHash]) revert RewardAlreadyDistributed();
-
-        // Verify oracle signature
-        bytes32 messageHash = MessageHashUtils.toEthSignedMessageHash(rewardHash);
-        address signer = ECDSA.recover(messageHash, signature);
-        if (!_authorizedOracles[signer]) revert InvalidOracleSignature();
 
         // Mark as distributed
         _distributedRewards[rewardHash] = true;
