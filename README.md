@@ -6,8 +6,8 @@
 
 ## Contracts
 
-- **ReferralGraph**: Manages referral relationships
-- **RewardDistributor**: Distribute rewards up through the referral tree
+- **ReferralGraph**: Shared referral relationships, skiplist, and payout-chain resolution
+- **RewardCalculator**: Geometric split math (standalone; your app owns token transfers)
 
 ## How It Works
 
@@ -33,7 +33,7 @@ Referral Tree:           Reward Distribution (user = Carol):
    User5 (Dave)
 ```
 
-**The reward pool flows upward** from the first referrer through the referral tree, with each level receiving a geometrically decreasing portion.
+**The reward pool flows upward** from the seed user through the referral tree, with each level receiving a geometrically decreasing portion. Your app resolves the chain and amounts on-chain, then transfers tokens itself.
 
 ### Exponential Network Growth
 
@@ -56,7 +56,7 @@ Referral Tree (each person refers multiple users):
 
 **Exponential Growth:** If each user refers just 3 others, Alice could eventually earn referral income from hundreds of users in her network. Each person below Alice (Bob, Charlie, Diana) refers their own users, who then refer more users, creating a cascading effect where early adopters like Alice benefit from exponential network growth.
 
-### Example: Oracle grants 1000 token referral bonus (`user` = User4)
+### Example: 1000 token referral bonus (`user` = User4)
 
 | Level | User  | Amount | Cumulative |
 | ----- | ----- | ------ | ---------- |
@@ -105,48 +105,29 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 
 **Note:** Groups are implicit - they exist once the first referral relationship is stored. A user is in a group's referral tree if they have been referred OR have referred others.
 
-### 2. Distribute Rewards
+### 2. Resolve Chain and Distribute Rewards
 
-Projects distribute rewards using their tokens:
+Your app contract (or backend) owns auth, funding, and transfers. Use the graph + calculator as read utilities:
 
 ```solidity
-bytes32 eventId = keccak256(abi.encodePacked(user3, "purchase"));
 bytes32 groupId = keccak256("project-a-users");
+uint256 totalAmount = 1000e18;
 
-// Oracle resolves the filtered payout chain (skiplisted addresses omitted) at signing time
-address[] memory chain = referralGraph.getPayoutChain(user2, groupId, 10);
-bytes32 chainHash = keccak256(abi.encode(chain));
+// Skiplist-aware payout chain (seed user first, then ancestors)
+address[] memory chain = referralGraph.getPayoutChain(user, groupId, 10);
+require(chain.length > 0, "Empty payout chain");
 
-ChainRewardData memory reward = ChainRewardData({
-    user: user2,              // Seed address for the payout chain
-    totalAmount: 1000e18,     // Referral bonus pool
-    rewardToken: projectAToken,
-    groupId: groupId,
-    eventId: eventId,
-    chainHash: chainHash      // Must match on-chain filtered chain
-});
+// Geometric split (exact sum, max 10 recipients)
+uint256[] memory amounts = rewardCalculator.calculateRewards(totalAmount, chain.length);
 
-// Any contract can relay the call; oracle signs off-chain
-// Hash is bound to chainid + verifying contract to prevent cross-deployment replay
-bytes32 rewardHash = keccak256(
-    abi.encodePacked(
-        block.chainid,
-        address(rewardDistributor),
-        reward.user,
-        reward.totalAmount,
-        reward.rewardToken,
-        reward.groupId,
-        reward.eventId,
-        reward.chainHash
-    )
-);
-bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", rewardHash));
-bytes memory signature = signWithOracleKey(messageHash);
-
-rewardDistributor.distributeChainRewards(reward, signature);
+for (uint256 i = 0; i < chain.length; i++) {
+    if (amounts[i] == 0) continue;
+    // Your custody model: transfer, mint, or credit an internal ledger
+    token.transfer(chain[i], amounts[i]);
+}
 ```
 
-The recovered signer must be authorized for `reward.groupId`. Registration still requires the oracle to call `register` directly. Skiplisted addresses are omitted from the payout chain (no pay, no level consumed).
+Skiplisted addresses are omitted from the payout chain (no pay, no level consumed). Replay protection, event eligibility, and failure policy are your integrator’s responsibility.
 
 ### 3. Skip List
 
@@ -168,34 +149,23 @@ referralGraph.setSkiplisted(user2, groupId, false);
 # Deploy shared referral graph (with optional initial oracle for a specific group)
 forge create src/core/ReferralGraph.sol:ReferralGraph --constructor-args <owner> <initialOracle> <initialGroupId>
 
-# Deploy shared reward distributor
-forge create src/core/RewardDistributor.sol:RewardDistributor --constructor-args <owner> <referralGraph> <initialOracle> <initialGroupId>
+# Deploy shared reward calculator (no constructor args)
+forge create src/core/RewardCalculator.sol:RewardCalculator
 ```
 
 Pass `address(0)` for `initialOracle` and `bytes32(0)` for `initialGroupId` to skip constructor-time authorization and authorize oracles after deployment.
 
 **2. Authorize Project Oracles**
 
-**Important:** Registration and reward distribution are restricted to authorized oracles. Authorization is **per group** — an oracle authorized for Project A cannot act on Project B unless explicitly authorized there too. You must authorize oracles in both contracts:
+Registration and skiplist management are restricted to authorized oracles. Authorization is **per group** — an oracle authorized for Project A cannot act on Project B unless explicitly authorized there too:
 
 ```solidity
 bytes32 projectAGroupId = keccak256("project-a-users");
 bytes32 projectBGroupId = keccak256("project-b-users");
 
-// Authorize Project A's oracle for Project A's group only
 referralGraph.authorizeOracle(projectAOracle, projectAGroupId);
-rewardDistributor.authorizeOracle(projectAOracle, projectAGroupId);
-
-// Authorize Project B's oracle for Project B's group only
 referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
-rewardDistributor.authorizeOracle(projectBOracle, projectBGroupId);
 ```
-
-**Note:** Typically, you'll authorize the same oracles in both contracts for the same group. The same oracle address can be authorized for multiple groups independently.
-
-**3. Configure Reward Distribution**
-
-No configuration is needed. `totalAmount` is distributed upward from `user` using geometric decay.
 
 ## API Reference
 
@@ -225,25 +195,12 @@ No configuration is needed. `totalAmount` is distributed upward from `user` usin
 - `getAncestors(address user, bytes32 groupId, uint256 maxLevels)` - Get raw referral chain (includes skiplisted)
 - `isRegistered(address user, bytes32 groupId)` - Check registration in group
 
-### RewardDistributor Functions
+### RewardCalculator Functions
 
-#### Oracle Management
-
-- `authorizeOracle(address oracle, bytes32 groupId)` - Authorize an oracle to distribute rewards in a group (owner only)
-- `unauthorizeOracle(address oracle, bytes32 groupId)` - Remove oracle authorization for a group (owner only)
-- `isAuthorizedOracle(address oracle, bytes32 groupId)` - Check if an oracle is authorized for a group
-- `getAuthorizedOracles(bytes32 groupId)` - Get all authorized oracles for a group
-
-#### Reward Distribution
-
-- `distributeChainRewards(ChainRewardData reward, bytes signature)` - Distribute rewards (signer must be authorized for `reward.groupId`; callable by any address). Requires matching `chainHash` of the filtered payout chain. Failed transfers credit claimable balances instead of reverting the batch.
-- `claim(address token)` / `claimFor(address recipient, address token)` - Withdraw claimable balances after a failed transfer
-- `claimable(address recipient, address token)` - View claimable balance
-- `rescueTokens(address token, address to, uint256 amount)` - Owner rescue (cannot drain reserved claimable amounts)
+- `calculateRewards(uint256 totalReward, uint256 numRecipients)` - Geometric 0.6 decay split; caps at 10 recipients; remainder goes to the first recipient so the array sums exactly to `totalReward`
 
 ## Audits
 
-- [Security Review — RewardDistributor.sol](https://bafkreicija67gjpc7nognuidf4hfuf73xhwbszqx5gukl7h5ms2c7znvvi.ipfs.community.bgipfs.com/)
 - [Security Audit Report — referralTree](https://bafkreiht462u57pucb7h6n7ntznycby7cauzaupbvuswvl7hytd5ov3dc4.ipfs.community.bgipfs.com/)
 
 ## Development

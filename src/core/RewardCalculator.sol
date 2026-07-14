@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {IRewardCalculator} from "../interfaces/IRewardCalculator.sol";
+
 /**
  * @title RewardCalculator
  * @notice Calculates reward distributions using geometric decay
  * @dev Provides performant reward splitting for referral chains
  */
-contract RewardCalculator {
+contract RewardCalculator is IRewardCalculator {
     /**
      * @notice Calculate reward distribution across recipients
      * @param totalReward Total amount to distribute
@@ -14,7 +16,11 @@ contract RewardCalculator {
      * @return amounts Array of reward amounts for each recipient
      * @dev Uses geometric decay with 0.6 ratio, ensures exact sum
      */
-    function calculateRewards(uint256 totalReward, uint256 numRecipients) external pure returns (uint256[] memory amounts) {
+    function calculateRewards(uint256 totalReward, uint256 numRecipients)
+        external
+        pure
+        returns (uint256[] memory amounts)
+    {
         if (numRecipients == 0) {
             return new uint256[](0);
         }

@@ -128,7 +128,7 @@ contract ContractName is IInterface, Owned {
 - Use `///` for single-line comments, `/** */` for multi-line
 
 #### Naming Conventions
-- **Contracts**: PascalCase (e.g., `ReferralGraph`, `RewardDistributor`)
+- **Contracts**: PascalCase (e.g., `ReferralGraph`, `RewardCalculator`)
 - **Functions**: camelCase (e.g., `registerUser`, `getReferrer`)
 - **Variables**: camelCase for local, _underscorePrefix for private state
 - **Constants**: UPPER_SNAKE_CASE
@@ -309,25 +309,12 @@ function getAncestors(address user, bytes32 groupId, uint256 maxLevels)
 }
 ```
 
-### Reward Distribution Logic
+### Reward Split Logic
 ```solidity
-function _calculateReward(uint256 totalAmount, uint256 level)
-    internal
-    view
-    returns (uint256)
-{
-    if (level == 0) {
-        return totalAmount * _originalUserPercentage / 10000;
-    }
-
-    uint256 reward = totalAmount * (10000 - _originalUserPercentage) / 10000;
-    for (uint256 i = 0; i < level; i++) {
-        reward = reward * _decayFactor / 10000;
-        if (reward < _minReward) return 0;
-    }
-    return reward;
-}
+// Integrators resolve the chain, then call the calculator
+address[] memory chain = referralGraph.getPayoutChain(user, groupId, 10);
+uint256[] memory amounts = rewardCalculator.calculateRewards(totalAmount, chain.length);
+// App transfers amounts[i] to chain[i] under its own custody/auth model
 ```
 
-Follow these guidelines to maintain consistency and quality across the codebase.</content>
-<parameter name="filePath">/Users/mattlovan/Projects/personal/qin/AGENTS.md
+Follow these guidelines to maintain consistency and quality across the codebase.

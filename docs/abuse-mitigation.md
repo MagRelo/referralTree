@@ -4,28 +4,24 @@
 
 This document explains the payout incentives in the current multi-level referral system and recommends ways to reduce abuse from Sybil accounts, fake referrers, collusive referral chains, and low-quality registrations.
 
-The main design principle is that the contracts should enforce simple invariants, while the oracle and registration process should enforce user quality, event eligibility, and fraud controls before rewards are signed.
+The main design principle is that the contracts should enforce simple attribution invariants, while the integrating app (and its oracle/backend) should enforce user quality, event eligibility, funding, transfers, and fraud controls.
 
 ## Current Mechanics
 
-The system has two trust boundaries:
+The shared infrastructure has two pieces:
 
-- `ReferralGraph` stores the referral tree for each `groupId`.
-- `RewardDistributor` verifies an authorized oracle signature and pays a reward pool up a referral chain.
+- `ReferralGraph` stores the referral tree for each `groupId` and resolves skiplist-aware payout chains via `getPayoutChain`.
+- `RewardCalculator` splits a reward pool with geometric 0.6 decay (exact sum, capped at 10 recipients).
 
 Registration is oracle-gated. Only an authorized oracle can call `register` or `batchRegister`. The graph prevents zero-address users, zero-address referrers, direct self-referrals, duplicate registrations in the same group, and registration under a referrer that is not already in the group's tree. The first user in a group can be registered under `REFERRAL_ROOT`.
 
 Referral edges are append-only. Once a user is registered in a group, their referrer cannot be changed by the current contract.
 
-Reward distribution is also oracle-gated, but through signatures. An authorized oracle signs `ChainRewardData`, including:
+**Payout auth and custody live in the integrating app.** Typical flow:
 
-- `user`: the first address in the payout chain and the largest recipient.
-- `totalAmount`: the reward pool to distribute.
-- `rewardToken`: the token paid from the distributor.
-- `groupId`: the referral tree used for upstream lookups.
-- `eventId`, `timestamp`, and `nonce`: off-chain event metadata used in the signed hash.
-
-When `distributeChainRewards` is called, the contract starts with `reward.user`, walks upward through that user's referrers, stops at `REFERRAL_ROOT` or an empty referrer, caps payouts at 10 recipients, and distributes the full `totalAmount` using geometric weights with a 0.6 decay ratio.
+1. App resolves `chain = referralGraph.getPayoutChain(seed, groupId, 10)`.
+2. App resolves `amounts = rewardCalculator.calculateRewards(totalAmount, chain.length)`.
+3. App transfers (or credits) each `amounts[i]` to `chain[i]` under its own access control and replay rules.
 
 ## Payout Incentives
 
@@ -86,25 +82,25 @@ Direct self-referral is blocked at the address level, but a user can still creat
 
 The contract cannot distinguish legitimate household, team, or community referrals from one person controlling many wallets. This has to be handled by registration and oracle policy.
 
-### Reward Event Replay by Variant Payload
+### Reward Event Replay
 
-The distributor prevents replay of the exact same signed reward hash. However, the same real-world event can be paid again if the oracle signs a second payload with a different `timestamp`, `nonce`, `totalAmount`, or `eventId`.
+`ReferralGraph` and `RewardCalculator` do not track paid events. If the integrating app does not enforce one payout per real-world event (or per `eventId`), the same activity can be paid repeatedly.
 
-This is primarily an oracle correctness issue. The contract does not enforce one payout per real-world event.
+This is primarily an integrator correctness issue.
 
 ### Unregistered First Recipient
 
-`distributeChainRewards` starts the payout chain with `reward.user` before looking up its referrer. If the oracle signs a reward for an address that is not registered in the selected group, that address can still receive 100% of the reward because the chain has one recipient.
+`getPayoutChain(seed, …)` starts with `seed` before walking referrers. An unregistered seed that is not skiplisted yields a one-address chain and can receive 100% of the pool if the app pays it.
 
-This may be intentional for direct campaign rewards, but if referral payouts should only go to registered referrers, the oracle must enforce that policy or the contract should require registration.
+If referral payouts should only go to registered referrers, the integrating app must enforce that policy.
 
 ### Oracle or Backend Compromise
 
-Authorized oracles can register referral edges and sign reward distributions. A compromised oracle key can create fake registrations, sign excessive rewards, choose arbitrary reward tokens held by the distributor, and route rewards to attacker addresses until the oracle is removed or funds are drained.
+Authorized graph oracles can register referral edges and manage skiplists. A compromised registration oracle can create fake trees. Separately, whoever controls the integrating app’s payout path can choose seed users, amounts, and tokens. Split those roles and monitor both.
 
 ### Group and Token Confusion
 
-Because `groupId` and `rewardToken` are included in the signed payload but not constrained by an app registry, the oracle is responsible for ensuring the event belongs to the group and token being paid. A signing bug could pay the wrong campaign, group, or token.
+Because `groupId` and the payment token are chosen by the integrating app, that app is responsible for ensuring the event belongs to the group and token being paid.
 
 ## Recommended Controls
 
@@ -156,7 +152,7 @@ Consider splitting rewards into pending, vested, and claimable states off-chain 
 - Use lower payout rates for shallow or low-confidence registrations.
 - Increase payout rates only after the referrer builds a clean history.
 
-The current geometric curve strongly rewards the first recipient. That is useful when `reward.user` is a legitimate referrer, but risky when the oracle can be tricked into setting `reward.user` to an attacker-controlled account. If abuse pressure is high, consider a smaller direct share, a fixed direct-referrer bonus plus capped upstream pool, or reward multipliers based on trust tier.
+The current geometric curve strongly rewards the first recipient. That is useful when the payout seed is a legitimate referrer, but risky when the app can be tricked into seeding an attacker-controlled account. If abuse pressure is high, consider a smaller direct share, a fixed direct-referrer bonus plus capped upstream pool, or reward multipliers based on trust tier.
 
 ### Sybil Resistance
 
@@ -171,31 +167,27 @@ No single Sybil defense is enough. Use layered signals and make abuse economics 
 
 Treat these as risk signals, not automatic proof. Some legitimate communities share devices, networks, exchanges, and funding sources.
 
-### Oracle Safety
+### Oracle / Integrator Safety
 
-The oracle is the highest-leverage control point. Recommended practices:
+The integrating app’s payout path is the highest-leverage control point. Recommended practices:
 
-- Maintain an off-chain idempotency table keyed by canonical real-world event ID, not by signed nonce alone.
-- Refuse to sign if `reward.user` is not an eligible registered account for `groupId`, unless the campaign explicitly allows direct non-referral rewards.
-- Enforce per-campaign budgets before signing.
+- Maintain an idempotency table keyed by canonical real-world event ID.
+- Refuse to pay if the seed address is not an eligible registered account for `groupId`, unless the campaign explicitly allows direct non-referral rewards.
+- Enforce per-campaign budgets before paying.
 - Enforce per-user, per-referrer, and per-group velocity limits.
-- Validate `rewardToken` against an allowlist for the campaign.
+- Validate the payment token against an allowlist for the campaign.
 - Validate `groupId` against the app or campaign that generated the event.
-- Sign with short-lived keys where possible and keep hot wallet limits low.
-- Use separate oracle keys for registration and reward signing.
-- Monitor oracle output for unusual amounts, tokens, groups, recipients, and signing velocity.
-- Keep an emergency runbook to unauthorize an oracle and pause funding when abuse is detected.
-
-For higher-value deployments, use multi-signer approval or threshold signing for large distributions, new tokens, new groups, or unusually high-risk accounts.
+- Use separate keys/roles for graph registration and payout triggering.
+- Monitor payouts for unusual amounts, tokens, groups, recipients, and velocity.
+- Keep an emergency runbook to unauthorize a graph oracle and pause app funding when abuse is detected.
 
 ### Contract-Level Improvements To Consider
 
-The current contracts are intentionally simple. If abuse risk increases, consider adding some guardrails on-chain:
+The shared contracts are intentionally simple. If abuse risk increases, consider guardrails in the integrating app or (selectively) on-chain:
 
-- Require `reward.user` to be registered in `groupId` before paying referral rewards.
-- Add EIP-712 typed data with `chainId` and verifying contract to prevent cross-chain or cross-contract signature reuse.
-- Include an on-chain consumed mapping by `eventId` or `(groupId, eventId)` if each event should pay once regardless of nonce.
-- Add per-token or per-group reward caps controlled by the owner or campaign admin.
+- Require the payout seed to be registered in `groupId` before paying referral rewards.
+- Include an on-chain consumed mapping by `eventId` or `(groupId, eventId)` if each event should pay once.
+- Add per-token or per-group reward caps controlled by the app owner or campaign admin.
 - Add an app or campaign registry that binds allowed oracles, groups, and reward tokens.
 - Add pause controls for distribution and registration separately.
 - Emit `groupId` in registration events to simplify monitoring and indexing.
@@ -212,7 +204,7 @@ Track abuse through product data, oracle decisions, and on-chain graph activity.
 - Chain depth distribution by group.
 - Percentage of rewards captured by top referrers.
 - Clusters of accounts sharing device, IP, funding source, withdrawal address, or behavioral fingerprints.
-- Duplicate or near-duplicate event records before signing.
+- Duplicate or near-duplicate event records before paying.
 
 Set alerts for sudden spikes, new referrers earning outsized rewards, and campaigns where reward cost exceeds expected user value.
 
@@ -229,15 +221,15 @@ Start conservative and loosen controls only after real data supports it:
 
 ## Open Questions
 
-- Should referral rewards only be paid when `reward.user` is registered in the target group?
+- Should referral rewards only be paid when the payout seed is registered in the target group?
 - Should every real-world event be payable once, or can one event intentionally produce multiple reward distributions?
 - What is the minimum qualifying action for each campaign?
 - What maximum payout is acceptable before stronger identity or manual review is required?
 - Should referrer attribution be permanently immutable, or should there be a controlled correction path?
-- Who owns oracle risk: the protocol owner, each campaign, or a shared fraud operations process?
+- Who owns payout risk: the protocol owner, each campaign, or a shared fraud operations process?
 
 ## Bottom Line
 
-The system is only as abuse-resistant as the oracle's registration and signing policy. The contracts prevent malformed tree edges and exact signed-payload replay, but they do not prove that users are unique, that referrers are genuine, or that reward events are economically valid.
+The system is only as abuse-resistant as the integrating app’s registration and payout policy. The shared contracts prevent malformed tree edges and provide deterministic split math, but they do not prove that users are unique, that referrers are genuine, or that reward events are economically valid.
 
-The best near-term mitigation is to make the oracle conservative: register only attributable referrals, sign only valuable and deduplicated events, cap exposure aggressively, and delay or review payouts when Sybil signals appear. Contract changes can add useful backstops, but the main defense against fake accounts and fake referrers will be product-level verification plus oracle discipline.
+The best near-term mitigation is to make the integrator conservative: register only attributable referrals, pay only valuable and deduplicated events, cap exposure aggressively, and delay or review payouts when Sybil signals appear. Contract changes can add useful backstops, but the main defense against fake accounts and fake referrers will be product-level verification plus payout discipline.
