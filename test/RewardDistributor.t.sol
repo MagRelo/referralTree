@@ -40,10 +40,43 @@ contract RewardDistributorTest is Test {
         platformToken.mint(address(config), type(uint256).max / 2);
     }
 
-    function _rewardHash(IRewardDistributor.ChainRewardData memory reward) internal pure returns (bytes32) {
+    function _payoutChain(address user) internal view returns (address[] memory) {
+        return referralGraph.getPayoutChain(user, testGroup, 10);
+    }
+
+    function _chainHash(address[] memory chain) internal pure returns (bytes32) {
+        return keccak256(abi.encode(chain));
+    }
+
+    function _rewardHash(IRewardDistributor.ChainRewardData memory reward) internal view returns (bytes32) {
         return keccak256(
-            abi.encodePacked(reward.user, reward.totalAmount, reward.rewardToken, reward.groupId, reward.eventId)
+            abi.encodePacked(
+                block.chainid,
+                address(config),
+                reward.user,
+                reward.totalAmount,
+                reward.rewardToken,
+                reward.groupId,
+                reward.eventId,
+                reward.chainHash
+            )
         );
+    }
+
+    function _buildReward(address user, uint256 totalAmount, bytes32 eventId)
+        internal
+        view
+        returns (IRewardDistributor.ChainRewardData memory)
+    {
+        address[] memory chain = _payoutChain(user);
+        return IRewardDistributor.ChainRewardData({
+            user: user,
+            totalAmount: totalAmount,
+            rewardToken: address(platformToken),
+            groupId: testGroup,
+            eventId: eventId,
+            chainHash: _chainHash(chain)
+        });
     }
 
     function _signReward(IRewardDistributor.ChainRewardData memory reward, uint256 privateKey)
@@ -60,6 +93,18 @@ contract RewardDistributorTest is Test {
     function testInitialSetup() public view {
         assertTrue(config.isAuthorizedOracle(oracleSigner, testGroup));
         assertEq(address(config.getReferralGraph()), address(referralGraph));
+    }
+
+    function testConstructorEmitsOracleAuthorized() public {
+        MockReferralGraph graph = new MockReferralGraph();
+        address newOracle = address(0xBEEF);
+        bytes32 groupId = keccak256("emit-group");
+
+        vm.expectEmit(true, true, false, true);
+        emit IRewardDistributor.OracleAuthorized(groupId, newOracle);
+
+        vm.prank(owner);
+        new RewardDistributor(owner, address(graph), newOracle, groupId);
     }
 
     function testAuthorizeOracle() public {
@@ -85,14 +130,7 @@ contract RewardDistributorTest is Test {
         referralGraph.setReferrer(user2, user1);
         referralGraph.setReferrer(user3, user2);
 
-        IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
-            user: user3,
-            totalAmount: totalReward,
-            rewardToken: address(platformToken),
-            groupId: testGroup,
-            eventId: eventId
-        });
-
+        IRewardDistributor.ChainRewardData memory reward = _buildReward(user3, totalReward, eventId);
         bytes32 rewardHash = _rewardHash(reward);
         bytes memory signature = _signReward(reward, oraclePrivateKey);
 
@@ -109,14 +147,169 @@ contract RewardDistributorTest is Test {
         assertTrue(config.isRewardDistributed(rewardHash));
     }
 
-    function testCannotDistributeWithInvalidSignature() public {
+    function testSkiplistedMidChainCompressesLevels() public {
+        referralGraph.setReferrer(user1, root);
+        referralGraph.setReferrer(user2, user1);
+        referralGraph.setReferrer(user3, user2);
+
+        referralGraph.setSkiplisted(user2, testGroup, true);
+
+        IRewardDistributor.ChainRewardData memory reward =
+            _buildReward(user3, 10000 ether, keccak256("skip-mid"));
+        bytes memory signature = _signReward(reward, oraclePrivateKey);
+
+        uint256 user1Before = platformToken.balanceOf(user1);
+        uint256 user2Before = platformToken.balanceOf(user2);
+        uint256 user3Before = platformToken.balanceOf(user3);
+
+        config.distributeChainRewards(reward, signature);
+
+        // chain is [user3, user1] — 2 recipients, 62.5% / 37.5%
+        assertEq(platformToken.balanceOf(user3) - user3Before, 6250 ether);
+        assertEq(platformToken.balanceOf(user1) - user1Before, 3750 ether);
+        assertEq(platformToken.balanceOf(user2) - user2Before, 0);
+    }
+
+    function testSkiplistedSeedContinuesToAncestors() public {
+        referralGraph.setReferrer(user1, root);
+        referralGraph.setReferrer(user2, user1);
+        referralGraph.setReferrer(user3, user2);
+
+        referralGraph.setSkiplisted(user3, testGroup, true);
+
+        IRewardDistributor.ChainRewardData memory reward =
+            _buildReward(user3, 10000 ether, keccak256("skip-seed"));
+        bytes memory signature = _signReward(reward, oraclePrivateKey);
+
+        uint256 user1Before = platformToken.balanceOf(user1);
+        uint256 user2Before = platformToken.balanceOf(user2);
+        uint256 user3Before = platformToken.balanceOf(user3);
+
+        config.distributeChainRewards(reward, signature);
+
+        // chain is [user2, user1]
+        assertEq(platformToken.balanceOf(user3) - user3Before, 0);
+        assertEq(platformToken.balanceOf(user2) - user2Before, 6250 ether);
+        assertEq(platformToken.balanceOf(user1) - user1Before, 3750 ether);
+    }
+
+    function testCannotDistributeWithChainMismatch() public {
+        referralGraph.setReferrer(user1, root);
+        referralGraph.setReferrer(user2, user1);
+        referralGraph.setReferrer(user3, user2);
+
+        IRewardDistributor.ChainRewardData memory reward = _buildReward(user3, 1000 ether, keccak256("mismatch"));
+        reward.chainHash = keccak256("wrong");
+        bytes memory signature = _signReward(reward, oraclePrivateKey);
+
+        vm.expectRevert(IRewardDistributor.ChainMismatch.selector);
+        config.distributeChainRewards(reward, signature);
+    }
+
+    function testCannotDistributeInvalidRewardUser() public {
         IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
-            user: user3,
-            totalAmount: 10000 ether,
+            user: address(0),
+            totalAmount: 1000 ether,
             rewardToken: address(platformToken),
             groupId: testGroup,
-            eventId: keccak256("test-event")
+            eventId: keccak256("zero-user"),
+            chainHash: bytes32(0)
         });
+        bytes memory signature = _signReward(reward, oraclePrivateKey);
+
+        vm.expectRevert(IRewardDistributor.InvalidRewardUser.selector);
+        config.distributeChainRewards(reward, signature);
+    }
+
+    function testCannotDistributeReferralRootUser() public {
+        IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
+            user: root,
+            totalAmount: 1000 ether,
+            rewardToken: address(platformToken),
+            groupId: testGroup,
+            eventId: keccak256("root-user"),
+            chainHash: bytes32(0)
+        });
+        bytes memory signature = _signReward(reward, oraclePrivateKey);
+
+        vm.expectRevert(IRewardDistributor.InvalidRewardUser.selector);
+        config.distributeChainRewards(reward, signature);
+    }
+
+    function testCannotDistributeCodelessToken() public {
+        address eoaToken = address(0xDEAD);
+        referralGraph.setReferrer(user1, root);
+
+        address[] memory chain = _payoutChain(user1);
+        IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
+            user: user1,
+            totalAmount: 1000 ether,
+            rewardToken: eoaToken,
+            groupId: testGroup,
+            eventId: keccak256("no-code"),
+            chainHash: _chainHash(chain)
+        });
+        bytes memory signature = _signReward(reward, oraclePrivateKey);
+
+        vm.expectRevert(IRewardDistributor.InvalidRewardToken.selector);
+        config.distributeChainRewards(reward, signature);
+    }
+
+    function testBlockedRecipientBecomesClaimable() public {
+        referralGraph.setReferrer(user1, root);
+        referralGraph.setReferrer(user2, user1);
+        referralGraph.setReferrer(user3, user2);
+
+        platformToken.setBlocked(user2, true);
+
+        IRewardDistributor.ChainRewardData memory reward =
+            _buildReward(user3, 10000 ether, keccak256("blocked"));
+        bytes memory signature = _signReward(reward, oraclePrivateKey);
+
+        uint256 user1Before = platformToken.balanceOf(user1);
+        uint256 user3Before = platformToken.balanceOf(user3);
+
+        config.distributeChainRewards(reward, signature);
+
+        assertGt(platformToken.balanceOf(user3) - user3Before, 0);
+        assertGt(platformToken.balanceOf(user1) - user1Before, 0);
+        assertEq(platformToken.balanceOf(user2), 0);
+        assertEq(config.claimable(user2, address(platformToken)), 3061224489795918367346);
+
+        platformToken.setBlocked(user2, false);
+        config.claimFor(user2, address(platformToken));
+        assertEq(platformToken.balanceOf(user2), 3061224489795918367346);
+        assertEq(config.claimable(user2, address(platformToken)), 0);
+    }
+
+    function testRescueTokensRespectsClaimable() public {
+        referralGraph.setReferrer(user1, root);
+        referralGraph.setReferrer(user2, user1);
+        referralGraph.setReferrer(user3, user2);
+        platformToken.setBlocked(user2, true);
+
+        IRewardDistributor.ChainRewardData memory reward =
+            _buildReward(user3, 10000 ether, keccak256("rescue"));
+        bytes memory signature = _signReward(reward, oraclePrivateKey);
+        config.distributeChainRewards(reward, signature);
+
+        uint256 claimableAmount = config.claimable(user2, address(platformToken));
+        uint256 balance = platformToken.balanceOf(address(config));
+        uint256 available = balance - claimableAmount;
+
+        vm.prank(owner);
+        config.rescueTokens(address(platformToken), owner, available);
+        assertEq(platformToken.balanceOf(owner), available);
+
+        vm.prank(owner);
+        vm.expectRevert(IRewardDistributor.InvalidParameters.selector);
+        config.rescueTokens(address(platformToken), owner, 1);
+    }
+
+    function testCannotDistributeWithInvalidSignature() public {
+        referralGraph.setReferrer(user1, root);
+        IRewardDistributor.ChainRewardData memory reward =
+            _buildReward(user3, 10000 ether, keccak256("test-event"));
 
         bytes memory invalidSignature = _signReward(reward, 0x9999);
 
@@ -125,13 +318,8 @@ contract RewardDistributorTest is Test {
     }
 
     function testCannotDistributeZeroAmount() public {
-        IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
-            user: user3,
-            totalAmount: 0,
-            rewardToken: address(platformToken),
-            groupId: testGroup,
-            eventId: keccak256("test-event")
-        });
+        IRewardDistributor.ChainRewardData memory reward =
+            _buildReward(user3, 0, keccak256("test-event"));
 
         bytes memory signature = _signReward(reward, oraclePrivateKey);
 
@@ -148,12 +336,14 @@ contract RewardDistributorTest is Test {
     function testCannotDistributeInUnauthorizedGroup() public {
         bytes32 otherGroup = keccak256("other-group");
 
+        address[] memory chain = referralGraph.getPayoutChain(user3, otherGroup, 10);
         IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
             user: user3,
             totalAmount: 1000 ether,
             rewardToken: address(platformToken),
             groupId: otherGroup,
-            eventId: keccak256("test-event")
+            eventId: keccak256("test-event"),
+            chainHash: _chainHash(chain)
         });
 
         bytes memory signature = _signReward(reward, oraclePrivateKey);
@@ -168,13 +358,8 @@ contract RewardDistributorTest is Test {
         referralGraph.setReferrer(user2, user1);
         referralGraph.setReferrer(user1, root);
 
-        IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
-            user: user4,
-            totalAmount: 10000 ether,
-            rewardToken: address(platformToken),
-            groupId: testGroup,
-            eventId: keccak256("test-event-depth")
-        });
+        IRewardDistributor.ChainRewardData memory reward =
+            _buildReward(user4, 10000 ether, keccak256("test-event-depth"));
 
         bytes32 rewardHash = _rewardHash(reward);
         bytes memory signature = _signReward(reward, oraclePrivateKey);
@@ -201,17 +386,12 @@ contract RewardDistributorTest is Test {
 
         for (uint256 i = 1; i <= chainDepth; i++) {
             chain[i] = address(uint160(uint256(keccak256(abi.encodePacked(testGroup, i)))));
-            vm.assume(chain[i] != address(0));
+            vm.assume(chain[i] != address(0) && chain[i] != root);
             referralGraph.setReferrer(chain[i], chain[i - 1]);
         }
 
-        IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
-            user: chain[chainDepth],
-            totalAmount: totalAmount,
-            rewardToken: address(platformToken),
-            groupId: testGroup,
-            eventId: keccak256(abi.encodePacked("fuzz-event", totalAmount, chainDepth))
-        });
+        IRewardDistributor.ChainRewardData memory reward =
+            _buildReward(chain[chainDepth], totalAmount, keccak256(abi.encodePacked("fuzz-event", totalAmount, chainDepth)));
 
         bytes32 rewardHash = _rewardHash(reward);
         bytes memory signature = _signReward(reward, oraclePrivateKey);
@@ -229,13 +409,7 @@ contract RewardDistributorTest is Test {
 
         referralGraph.setReferrer(user1, root);
 
-        IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
-            user: user1,
-            totalAmount: totalAmount,
-            rewardToken: address(platformToken),
-            groupId: testGroup,
-            eventId: eventId
-        });
+        IRewardDistributor.ChainRewardData memory reward = _buildReward(user1, totalAmount, eventId);
 
         bytes32 rewardHash = _rewardHash(reward);
         bytes memory signature = _signReward(reward, oraclePrivateKey);

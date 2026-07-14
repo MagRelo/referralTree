@@ -24,17 +24,19 @@ contract ReferralGraph is IReferralGraph, Owned {
     /// @notice List of authorized oracles per group for enumeration
     mapping(bytes32 => address[]) private _authorizedOraclesList;
 
-     /**
-      * @notice Constructor
-      * @param initialOwner The initial owner of the contract
-      * @param initialOracle Initial oracle address to authorize (optional, can be address(0))
-      * @param initialGroupId Group to authorize the initial oracle for
-      */
-    constructor(
-        address initialOwner,
-        address initialOracle,
-        bytes32 initialGroupId
-    ) Owned(initialOwner) {
+    /// @notice Skiplisted addresses per group (omitted from payout chain resolution)
+    mapping(bytes32 => mapping(address => bool)) private _skiplisted;
+
+    /// @notice List of skiplisted addresses per group for enumeration
+    mapping(bytes32 => address[]) private _skiplistedList;
+
+    /**
+     * @notice Constructor
+     * @param initialOwner The initial owner of the contract
+     * @param initialOracle Initial oracle address to authorize (optional, can be address(0))
+     * @param initialGroupId Group to authorize the initial oracle for
+     */
+    constructor(address initialOwner, address initialOracle, bytes32 initialGroupId) Owned(initialOwner) {
         if (initialOracle != address(0)) {
             _authorizedOracles[initialGroupId][initialOracle] = true;
             _authorizedOraclesList[initialGroupId].push(initialOracle);
@@ -49,7 +51,6 @@ contract ReferralGraph is IReferralGraph, Owned {
     function isRegistered(address user, bytes32 groupId) external view returns (bool) {
         return _referrers[groupId][user] != address(0);
     }
-
 
     /// @notice Get the referrer of a user in a group
     /// @param user The user to query
@@ -87,7 +88,6 @@ contract ReferralGraph is IReferralGraph, Owned {
             count++;
         }
 
-        // Trim the array to actual length
         address[] memory result = new address[](count);
         for (uint256 i = 0; i < count; i++) {
             result[i] = ancestors[i];
@@ -96,14 +96,108 @@ contract ReferralGraph is IReferralGraph, Owned {
         return result;
     }
 
+    /// @inheritdoc IReferralGraph
+    function getPayoutAncestors(address user, bytes32 groupId, uint256 maxLevels)
+        external
+        view
+        returns (address[] memory)
+    {
+        if (user == address(0) || user == REFERRAL_ROOT || maxLevels == 0) {
+            return new address[](0);
+        }
+
+        address[] memory ancestors = new address[](maxLevels);
+        uint256 count = 0;
+        address current = _referrers[groupId][user];
+
+        while (current != address(0) && current != REFERRAL_ROOT && count < maxLevels) {
+            if (!_skiplisted[groupId][current]) {
+                ancestors[count] = current;
+                count++;
+            }
+            current = _referrers[groupId][current];
+        }
+
+        address[] memory result = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            result[i] = ancestors[i];
+        }
+
+        return result;
+    }
+
+    /// @inheritdoc IReferralGraph
+    function getPayoutChain(address user, bytes32 groupId, uint256 maxLevels)
+        external
+        view
+        returns (address[] memory chain)
+    {
+        if (user == address(0) || user == REFERRAL_ROOT || maxLevels == 0) {
+            return new address[](0);
+        }
+
+        address[] memory buffer = new address[](maxLevels);
+        uint256 length = 0;
+        address current = user;
+
+        while (current != address(0) && current != REFERRAL_ROOT && length < maxLevels) {
+            if (!_skiplisted[groupId][current]) {
+                buffer[length++] = current;
+            }
+            current = _referrers[groupId][current];
+        }
+
+        chain = new address[](length);
+        for (uint256 i = 0; i < length; i++) {
+            chain[i] = buffer[i];
+        }
+    }
+
+    /// @inheritdoc IReferralGraph
+    function isSkiplisted(address user, bytes32 groupId) external view returns (bool) {
+        return _skiplisted[groupId][user];
+    }
+
+    /// @inheritdoc IReferralGraph
+    function getSkiplisted(bytes32 groupId) external view returns (address[] memory) {
+        return _skiplistedList[groupId];
+    }
+
+    /// @inheritdoc IReferralGraph
+    function setSkiplisted(address user, bytes32 groupId, bool skiplisted)
+        external
+        onlyAuthorizedOracle(groupId)
+    {
+        if (user == address(0) || user == REFERRAL_ROOT) revert InvalidUserAddress();
+
+        if (skiplisted) {
+            if (!_skiplisted[groupId][user]) {
+                _skiplisted[groupId][user] = true;
+                _skiplistedList[groupId].push(user);
+                emit AddressSkiplisted(groupId, user);
+            }
+        } else if (_skiplisted[groupId][user]) {
+            _skiplisted[groupId][user] = false;
+
+            address[] storage list = _skiplistedList[groupId];
+            for (uint256 i = 0; i < list.length; i++) {
+                if (list[i] == user) {
+                    list[i] = list[list.length - 1];
+                    list.pop();
+                    break;
+                }
+            }
+
+            emit AddressUnskiplisted(groupId, user);
+        }
+    }
+
     /// @notice Check if a user is in a group's referral tree
     /// @param user The user to check
     /// @param groupId The group ID
     /// @return True if user appears in the referral tree (has been referred or has referred others, or is root)
     function _isInReferralTree(address user, bytes32 groupId) internal view returns (bool) {
-        // Root is always considered in the tree if set
         if (user == REFERRAL_ROOT && REFERRAL_ROOT != address(0)) return true;
-        // User is in tree if they have been referred OR they have referred others
         return _referrers[groupId][user] != address(0) || _children[groupId][user].length > 0;
     }
 
@@ -112,13 +206,11 @@ contract ReferralGraph is IReferralGraph, Owned {
     /// @param referrer The referrer address
     /// @param groupId The group ID
     function _register(address user, address referrer, bytes32 groupId) internal {
-        if (user == address(0)) revert InvalidUserAddress();
+        if (user == address(0) || user == REFERRAL_ROOT) revert InvalidUserAddress();
         if (referrer == address(0)) revert InvalidReferrerAddress();
         if (referrer == user) revert SelfReferralNotAllowed();
         if (_referrers[groupId][user] != address(0)) revert UserAlreadyRegistered();
 
-        // If referrer provided, they must be in the referral tree
-        // Exception: root is always allowed as referrer if set (for first registration)
         if (referrer != REFERRAL_ROOT && !_isInReferralTree(referrer, groupId)) {
             revert ReferrerNotInTree();
         }

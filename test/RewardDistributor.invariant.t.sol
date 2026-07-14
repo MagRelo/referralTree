@@ -56,10 +56,23 @@ contract RewardDistributorInvariantTest is Test {
         excludeSelector(FuzzSelector({addr: address(config), selectors: selectors}));
     }
 
-    function _signReward(IRewardDistributor.ChainRewardData memory reward) internal view returns (bytes memory) {
-        bytes32 rewardHash = keccak256(
-            abi.encodePacked(reward.user, reward.totalAmount, reward.rewardToken, reward.groupId, reward.eventId)
+    function _rewardHash(IRewardDistributor.ChainRewardData memory reward) internal view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                block.chainid,
+                address(config),
+                reward.user,
+                reward.totalAmount,
+                reward.rewardToken,
+                reward.groupId,
+                reward.eventId,
+                reward.chainHash
+            )
         );
+    }
+
+    function _signReward(IRewardDistributor.ChainRewardData memory reward) internal view returns (bytes memory) {
+        bytes32 rewardHash = _rewardHash(reward);
         bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", rewardHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(oraclePrivateKey, messageHash);
         return abi.encodePacked(r, s, v);
@@ -68,19 +81,21 @@ contract RewardDistributorInvariantTest is Test {
     function distributeReward(address user, uint256 totalAmount, bytes32 eventId) public {
         if (totalAmount == 0) return;
         if (totalAmount > contractInitialBalance) return;
-        if (user == address(0)) return;
+        if (user == address(0) || user == address(1)) return;
+
+        address[] memory chain = referralGraph.getPayoutChain(user, TEST_GROUP, 10);
+        if (chain.length == 0) return;
 
         IRewardDistributor.ChainRewardData memory reward = IRewardDistributor.ChainRewardData({
             user: user,
             totalAmount: totalAmount,
             rewardToken: address(platformToken),
             groupId: TEST_GROUP,
-            eventId: eventId
+            eventId: eventId,
+            chainHash: keccak256(abi.encode(chain))
         });
 
-        bytes32 rewardHash = keccak256(
-            abi.encodePacked(reward.user, reward.totalAmount, reward.rewardToken, reward.groupId, reward.eventId)
-        );
+        bytes32 rewardHash = _rewardHash(reward);
 
         if (distributedRewards[rewardHash]) return;
 

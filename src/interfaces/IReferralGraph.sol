@@ -15,6 +15,12 @@ interface IReferralGraph {
     /// @notice Emitted when an oracle is unauthorized for a group
     event OracleUnauthorized(bytes32 indexed groupId, address indexed oracle);
 
+    /// @notice Emitted when an address is added to a group's skip list
+    event AddressSkiplisted(bytes32 indexed groupId, address indexed user);
+
+    /// @notice Emitted when an address is removed from a group's skip list
+    event AddressUnskiplisted(bytes32 indexed groupId, address indexed user);
+
     /// @notice Error when user address is invalid (zero address)
     error InvalidUserAddress();
 
@@ -55,15 +61,53 @@ interface IReferralGraph {
     /// @return Array of ancestors, starting with immediate referrer
     function getAncestors(address user, bytes32 groupId, uint256 maxLevels) external view returns (address[] memory);
 
+    /// @notice Get ancestors with skiplisted addresses removed (does not count them toward maxLevels)
+    /// @param user The user to get ancestors for
+    /// @param groupId The group ID
+    /// @param maxLevels Maximum number of non-skiplisted ancestors to return
+    /// @return Array of non-skiplisted ancestors, starting with the nearest eligible referrer
+    function getPayoutAncestors(address user, bytes32 groupId, uint256 maxLevels)
+        external
+        view
+        returns (address[] memory);
+
+    /// @notice Build the payout chain starting from `user`, omitting skiplisted addresses
+    /// @param user First candidate recipient (omitted if skiplisted; walk continues upward)
+    /// @param groupId The group ID
+    /// @param maxLevels Maximum number of paid recipients to return
+    /// @return chain Non-skiplisted addresses from `user` upward, capped at `maxLevels`
+    function getPayoutChain(address user, bytes32 groupId, uint256 maxLevels)
+        external
+        view
+        returns (address[] memory chain);
+
     /// @notice Check if a user is registered in a group
     /// @param user The user to check
     /// @param groupId The group ID
     /// @return True if the user has a referrer in the group
     function isRegistered(address user, bytes32 groupId) external view returns (bool);
 
+    /// @notice Check if an address is on the skip list for a group
+    /// @param user The address to check
+    /// @param groupId The group ID
+    /// @return True if skiplisted
+    function isSkiplisted(address user, bytes32 groupId) external view returns (bool);
+
+    /// @notice Get all skiplisted addresses for a group
+    /// @param groupId The group to query
+    /// @return Array of skiplisted addresses
+    function getSkiplisted(bytes32 groupId) external view returns (address[] memory);
+
+    /// @notice Add or remove an address from a group's skip list
+    /// @param user The address to update
+    /// @param groupId The group ID
+    /// @param skiplisted True to skiplist, false to remove
+    /// @dev Only callable by an oracle authorized for `groupId`
+    function setSkiplisted(address user, bytes32 groupId, bool skiplisted) external;
+
     /// @notice Register a user with a referrer in a group
     /// @param user The user being registered
-    /// @param referrer The referrer address (must be in the group's referral tree, or address(0) for root registration)
+    /// @param referrer The referrer address (must be in the group's referral tree, or REFERRAL_ROOT for root registration)
     /// @param groupId The group ID (group is auto-created on first registration)
     /// @dev Groups are implicitly created when the first user registers. A user is in a group's referral tree if they have been referred or have referred others.
     function register(address user, address referrer, bytes32 groupId) external;

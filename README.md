@@ -87,7 +87,7 @@ bytes32 groupId = keccak256("project-a-users");
 
 /// @notice Register a user with a referrer in a group
 /// @param user The user being registered
-/// @param referrer The referrer address (must be in the group's referral tree, or address(0) for root registration)
+/// @param referrer The referrer address (must be in the group's referral tree, or REFERRAL_ROOT for root registration)
 /// @param groupId The group ID
 /// @dev Groups are implicitly created when the first user registers. A user is in a group's referral tree if they have been referred or have referred others.
 referralGraph.register(user1, root, groupId);
@@ -113,17 +113,32 @@ Projects distribute rewards using their tokens:
 bytes32 eventId = keccak256(abi.encodePacked(user3, "purchase"));
 bytes32 groupId = keccak256("project-a-users");
 
+// Oracle resolves the filtered payout chain (skiplisted addresses omitted) at signing time
+address[] memory chain = referralGraph.getPayoutChain(user2, groupId, 10);
+bytes32 chainHash = keccak256(abi.encode(chain));
+
 ChainRewardData memory reward = ChainRewardData({
-    user: user2,              // First referrer in the payout chain
+    user: user2,              // Seed address for the payout chain
     totalAmount: 1000e18,     // Referral bonus pool
     rewardToken: projectAToken,
     groupId: groupId,
-    eventId: eventId
+    eventId: eventId,
+    chainHash: chainHash      // Must match on-chain filtered chain
 });
 
 // Any contract can relay the call; oracle signs off-chain
+// Hash is bound to chainid + verifying contract to prevent cross-deployment replay
 bytes32 rewardHash = keccak256(
-    abi.encodePacked(reward.user, reward.totalAmount, reward.rewardToken, reward.groupId, reward.eventId)
+    abi.encodePacked(
+        block.chainid,
+        address(rewardDistributor),
+        reward.user,
+        reward.totalAmount,
+        reward.rewardToken,
+        reward.groupId,
+        reward.eventId,
+        reward.chainHash
+    )
 );
 bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", rewardHash));
 bytes memory signature = signWithOracleKey(messageHash);
@@ -131,7 +146,19 @@ bytes memory signature = signWithOracleKey(messageHash);
 rewardDistributor.distributeChainRewards(reward, signature);
 ```
 
-The recovered signer must be authorized for `reward.groupId`. Registration still requires the oracle to call `register` directly.
+The recovered signer must be authorized for `reward.groupId`. Registration still requires the oracle to call `register` directly. Skiplisted addresses are omitted from the payout chain (no pay, no level consumed).
+
+### 3. Skip List
+
+Authorized registration oracles can exclude addresses from payout resolution without rewriting the referral graph:
+
+```solidity
+// Omit user2 from future payout chains in this group
+referralGraph.setSkiplisted(user2, groupId, true);
+
+// Later, restore them
+referralGraph.setSkiplisted(user2, groupId, false);
+```
 
 ## Initial Setup
 
@@ -176,18 +203,26 @@ No configuration is needed. `totalAmount` is distributed upward from `user` usin
 
 #### Referral Management
 
-- `register(address user, address referrer, bytes32 groupId)` - Register referral in group (oracle-only, group auto-created on first registration)
+- `register(address user, address referrer, bytes32 groupId)` - Register referral in group (oracle-only, group auto-created on first registration). Root registration uses `REFERRAL_ROOT` (`0x…01`), not `address(0)`.
 - `batchRegister(address[] users, address referrer, bytes32 groupId)` - Batch register users (oracle-only)
+
+#### Skip List
+
+- `setSkiplisted(address user, bytes32 groupId, bool skiplisted)` - Add/remove an address from the skip list (oracle-only for that group)
+- `isSkiplisted(address user, bytes32 groupId)` - Check if an address is skiplisted
+- `getSkiplisted(bytes32 groupId)` - Enumerate skiplisted addresses for a group
+- `getPayoutAncestors(address user, bytes32 groupId, uint256 maxLevels)` - Ancestors with skiplisted addresses omitted
+- `getPayoutChain(address user, bytes32 groupId, uint256 maxLevels)` - Seed + ancestors with skiplisted addresses omitted (used for rewards)
 
 #### Oracle Management
 
-- `authorizeOracle(address oracle, bytes32 groupId)` - Authorize an oracle to register referrals in a group (owner only)
+- `authorizeOracle(address oracle, bytes32 groupId)` - Authorize an oracle to register referrals / manage skip list in a group (owner only)
 - `unauthorizeOracle(address oracle, bytes32 groupId)` - Remove oracle authorization for a group (owner only)
 - `isAuthorizedOracle(address oracle, bytes32 groupId)` - Check if an oracle is authorized for a group
 - `getAuthorizedOracles(bytes32 groupId)` - Get all authorized oracles for a group
 - `getReferrer(address user, bytes32 groupId)` - Get referrer in group
 - `getChildren(address referrer, bytes32 groupId)` - Get referrals in group
-- `getAncestors(address user, bytes32 groupId, uint256 maxLevels)` - Get referral chain
+- `getAncestors(address user, bytes32 groupId, uint256 maxLevels)` - Get raw referral chain (includes skiplisted)
 - `isRegistered(address user, bytes32 groupId)` - Check registration in group
 
 ### RewardDistributor Functions
@@ -201,7 +236,15 @@ No configuration is needed. `totalAmount` is distributed upward from `user` usin
 
 #### Reward Distribution
 
-- `distributeChainRewards(ChainRewardData reward, bytes signature)` - Distribute rewards (signer must be authorized for `reward.groupId`; callable by any address)
+- `distributeChainRewards(ChainRewardData reward, bytes signature)` - Distribute rewards (signer must be authorized for `reward.groupId`; callable by any address). Requires matching `chainHash` of the filtered payout chain. Failed transfers credit claimable balances instead of reverting the batch.
+- `claim(address token)` / `claimFor(address recipient, address token)` - Withdraw claimable balances after a failed transfer
+- `claimable(address recipient, address token)` - View claimable balance
+- `rescueTokens(address token, address to, uint256 amount)` - Owner rescue (cannot drain reserved claimable amounts)
+
+## Audits
+
+- [Security Review — RewardDistributor.sol](https://bafkreicija67gjpc7nognuidf4hfuf73xhwbszqx5gukl7h5ms2c7znvvi.ipfs.community.bgipfs.com/)
+- [Security Audit Report — referralTree](https://bafkreiht462u57pucb7h6n7ntznycby7cauzaupbvuswvl7hytd5ov3dc4.ipfs.community.bgipfs.com/)
 
 ## Development
 

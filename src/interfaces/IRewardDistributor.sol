@@ -10,11 +10,12 @@ import {IReferralGraph} from "./IReferralGraph.sol";
 interface IRewardDistributor {
     /// @notice Chain reward distribution data
     struct ChainRewardData {
-        address user;           // First referrer in the payout chain (largest share)
-        uint256 totalAmount;    // Bonus amount to distribute across referral recipients
-        address rewardToken;    // Token to distribute as rewards
-        bytes32 groupId;        // User group for referral chain lookup
-        bytes32 eventId;        // Unique event identifier
+        address user; // First referrer in the payout chain (largest share)
+        uint256 totalAmount; // Bonus amount to distribute across referral recipients
+        address rewardToken; // Token to distribute as rewards
+        bytes32 groupId; // User group for referral chain lookup
+        bytes32 eventId; // Unique event identifier
+        bytes32 chainHash; // keccak256(abi.encode(filteredPayoutChain)) at signing time
     }
 
     /// @notice Emitted when an oracle is authorized for a group
@@ -37,6 +38,15 @@ interface IRewardDistributor {
         uint256[] amounts
     );
 
+    /// @notice Emitted when a transfer fails and the amount is credited as claimable
+    event RewardClaimable(address indexed recipient, address indexed token, uint256 amount);
+
+    /// @notice Emitted when claimable rewards are withdrawn
+    event RewardClaimed(address indexed recipient, address indexed token, uint256 amount);
+
+    /// @notice Emitted when the owner rescues tokens
+    event TokensRescued(address indexed token, address indexed to, uint256 amount);
+
     /// @notice Error when oracle address is invalid (zero address)
     error InvalidOracleAddress();
 
@@ -55,6 +65,24 @@ interface IRewardDistributor {
     /// @notice Error when reward amount is zero
     error ZeroRewardAmount();
 
+    /// @notice Error when reward.user is address(0) or REFERRAL_ROOT
+    error InvalidRewardUser();
+
+    /// @notice Error when rewardToken has no code
+    error InvalidRewardToken();
+
+    /// @notice Error when live filtered chain does not match signed chainHash
+    error ChainMismatch();
+
+    /// @notice Error when filtered payout chain is empty
+    error EmptyPayoutChain();
+
+    /// @notice Error when there is nothing to claim
+    error NothingToClaim();
+
+    /// @notice Error when rescue target is invalid
+    error InvalidRescueAddress();
+
     /// @notice Get the referral graph contract
     /// @return Referral graph address
     function getReferralGraph() external view returns (IReferralGraph);
@@ -63,6 +91,9 @@ interface IRewardDistributor {
     /// @param rewardHash The hash of the reward data
     /// @return True if distributed
     function isRewardDistributed(bytes32 rewardHash) external view returns (bool);
+
+    /// @notice Claimable balance for a recipient and token
+    function claimable(address recipient, address token) external view returns (uint256);
 
     /// @notice Authorize an oracle to distribute rewards in a group
     /// @param oracle The oracle address to authorize
@@ -90,4 +121,14 @@ interface IRewardDistributor {
     /// @param signature Oracle signature over the reward hash (EIP-191)
     /// @dev Callable by any address. Signer must be authorized for `reward.groupId`. Walks upward from `reward.user` through referrers and distributes full `totalAmount`
     function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external;
+
+    /// @notice Claim claimable tokens for msg.sender
+    function claim(address token) external;
+
+    /// @notice Claim claimable tokens on behalf of a recipient
+    function claimFor(address recipient, address token) external;
+
+    /// @notice Rescue tokens held by the contract (owner only)
+    /// @dev Must not drain amounts reserved in claimable balances
+    function rescueTokens(address token, address to, uint256 amount) external;
 }

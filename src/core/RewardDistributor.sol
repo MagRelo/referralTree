@@ -21,6 +21,9 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     /// @notice Special address representing the root of all referral trees
     address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
+    /// @notice Maximum number of recipients paid per distribution
+    uint256 public constant MAX_PAYOUT_LEVELS = 10;
+
     /// @notice Referral graph contract
     IReferralGraph public immutable referralGraph;
 
@@ -36,24 +39,29 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     /// @notice Tracks distributed rewards to prevent double distribution
     mapping(bytes32 => bool) private _distributedRewards;
 
-     /**
-      * @notice Constructor
-      * @param initialOwner The initial owner of the contract
-      * @param _referralGraph Address of the referral graph contract
-      * @param initialOracle Initial oracle address to authorize
-      * @param initialGroupId Group to authorize the initial oracle for
-      */
-    constructor(
-        address initialOwner,
-        address _referralGraph,
-        address initialOracle,
-        bytes32 initialGroupId
-    ) Owned(initialOwner) {
+    /// @notice Claimable balances for recipients whose transfers failed
+    mapping(address => mapping(address => uint256)) private _claimable;
+
+    /// @notice Total claimable amount reserved per token (rescue cannot drain below this)
+    mapping(address => uint256) private _totalClaimable;
+
+    /**
+     * @notice Constructor
+     * @param initialOwner The initial owner of the contract
+     * @param _referralGraph Address of the referral graph contract
+     * @param initialOracle Initial oracle address to authorize
+     * @param initialGroupId Group to authorize the initial oracle for
+     */
+    constructor(address initialOwner, address _referralGraph, address initialOracle, bytes32 initialGroupId)
+        Owned(initialOwner)
+    {
+        if (_referralGraph == address(0)) revert InvalidParameters();
         referralGraph = IReferralGraph(_referralGraph);
         rewardCalculator = new RewardCalculator();
         if (initialOracle != address(0)) {
             _authorizedOracles[initialGroupId][initialOracle] = true;
             _authorizedOraclesList[initialGroupId].push(initialOracle);
+            emit OracleAuthorized(initialGroupId, initialOracle);
         }
     }
 
@@ -65,6 +73,11 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     /// @inheritdoc IRewardDistributor
     function isRewardDistributed(bytes32 rewardHash) external view returns (bool) {
         return _distributedRewards[rewardHash];
+    }
+
+    /// @inheritdoc IRewardDistributor
+    function claimable(address recipient, address token) external view returns (uint256) {
+        return _claimable[recipient][token];
     }
 
     /// @inheritdoc IRewardDistributor
@@ -108,14 +121,19 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
     /// @inheritdoc IRewardDistributor
     function distributeChainRewards(ChainRewardData calldata reward, bytes calldata signature) external nonReentrant {
         if (reward.totalAmount == 0) revert ZeroRewardAmount();
+        if (reward.user == address(0) || reward.user == REFERRAL_ROOT) revert InvalidRewardUser();
+        if (reward.rewardToken.code.length == 0) revert InvalidRewardToken();
 
         bytes32 rewardHash = keccak256(
             abi.encodePacked(
+                block.chainid,
+                address(this),
                 reward.user,
                 reward.totalAmount,
                 reward.rewardToken,
                 reward.groupId,
-                reward.eventId
+                reward.eventId,
+                reward.chainHash
             )
         );
 
@@ -125,55 +143,80 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
         address signer = SignatureLib.recover(messageHash, signature);
         if (!_authorizedOracles[reward.groupId][signer]) revert InvalidOracleSignature();
 
-        // Mark as distributed
+        address[] memory chain = referralGraph.getPayoutChain(reward.user, reward.groupId, MAX_PAYOUT_LEVELS);
+        if (chain.length == 0) revert EmptyPayoutChain();
+        if (keccak256(abi.encode(chain)) != reward.chainHash) revert ChainMismatch();
+
+        // Mark as distributed after successful chain verification
         _distributedRewards[rewardHash] = true;
 
-        // Build payout chain upward from the first referrer
-        address[] memory chain = _getReferralChain(reward.user, reward.groupId);
-
-        // Calculate rewards across the chain
         (address[] memory recipients, uint256[] memory amounts) = _calculateChainRewards(reward.totalAmount, chain);
 
-        // Transfer tokens to all recipients
         for (uint256 i = 0; i < recipients.length; i++) {
-            if (amounts[i] > 0) {
-                SafeTransferLib.safeTransfer(ERC20(reward.rewardToken), recipients[i], amounts[i]);
+            if (amounts[i] == 0) continue;
+            if (!_tryTransfer(reward.rewardToken, recipients[i], amounts[i])) {
+                _claimable[recipients[i]][reward.rewardToken] += amounts[i];
+                _totalClaimable[reward.rewardToken] += amounts[i];
+                emit RewardClaimable(recipients[i], reward.rewardToken, amounts[i]);
             }
         }
 
         emit ChainRewardsDistributed(reward.user, reward.totalAmount, reward.eventId, recipients, amounts);
     }
 
+    /// @inheritdoc IRewardDistributor
+    function claim(address token) external nonReentrant {
+        _claim(msg.sender, token);
+    }
+
+    /// @inheritdoc IRewardDistributor
+    function claimFor(address recipient, address token) external nonReentrant {
+        if (recipient == address(0)) revert InvalidParameters();
+        _claim(recipient, token);
+    }
+
+    /// @inheritdoc IRewardDistributor
+    function rescueTokens(address token, address to, uint256 amount) external onlyOwner {
+        if (to == address(0)) revert InvalidRescueAddress();
+        if (token == address(0) || amount == 0) revert InvalidParameters();
+
+        uint256 balance = ERC20(token).balanceOf(address(this));
+        uint256 reserved = _totalClaimable[token];
+        if (amount > balance - reserved) revert InvalidParameters();
+
+        SafeTransferLib.safeTransfer(ERC20(token), to, amount);
+        emit TokensRescued(token, to, amount);
+    }
+
     /**
-     * @notice Get the payout chain starting from the first referrer
-     * @param user First referrer in the payout chain
-     * @param groupId The group ID for the referral chain
-     * @return Array of addresses to pay, starting with `user` and continuing up through referrers
-     * @dev Up to 11 addresses: first referrer plus 10 upstream referrers
+     * @notice Attempt an ERC20 transfer; returns false on failure instead of reverting the batch
      */
-    function _getReferralChain(address user, bytes32 groupId) internal view returns (address[] memory) {
-        address[] memory chain = new address[](11);
-        uint256 length = 0;
-
-        address current = user;
-        chain[length++] = current;
-
-        // Add up to 10 ancestors, stopping at REFERRAL_ROOT or end of chain
-        while (length < 11) {
-            current = referralGraph.getReferrer(current, groupId);
-            if (current == address(0) || current == REFERRAL_ROOT) {
-                break; // Stop at end or root
-            }
-            chain[length++] = current;
+    function _tryTransfer(address token, address to, uint256 amount) internal returns (bool success) {
+        try this.safeTransferExternal(token, to, amount) {
+            return true;
+        } catch {
+            return false;
         }
+    }
 
-        // Resize to actual length (will be 1-11)
-        address[] memory result = new address[](length);
-        for (uint256 i = 0; i < length; i++) {
-            result[i] = chain[i];
-        }
+    /**
+     * @notice External transfer helper for try/catch isolation
+     * @dev Must be called via `this.` so failures do not bubble out of distributeChainRewards
+     */
+    function safeTransferExternal(address token, address to, uint256 amount) external {
+        if (msg.sender != address(this)) revert UnauthorizedApp();
+        SafeTransferLib.safeTransfer(ERC20(token), to, amount);
+    }
 
-        return result;
+    function _claim(address recipient, address token) internal {
+        uint256 amount = _claimable[recipient][token];
+        if (amount == 0) revert NothingToClaim();
+
+        _claimable[recipient][token] = 0;
+        _totalClaimable[token] -= amount;
+
+        SafeTransferLib.safeTransfer(ERC20(token), recipient, amount);
+        emit RewardClaimed(recipient, token, amount);
     }
 
     /**
@@ -182,23 +225,19 @@ contract RewardDistributor is IRewardDistributor, Owned, ReentrancyGuard {
      * @param chain Payout chain starting with the first referrer
      * @return recipients Array of addresses to receive rewards
      * @return amounts Array of reward amounts corresponding to recipients
-     * @dev Distributes full `totalAmount` across the chain using geometric decay
      */
     function _calculateChainRewards(uint256 totalAmount, address[] memory chain)
         internal
         view
         returns (address[] memory recipients, uint256[] memory amounts)
     {
-        // RewardCalculator supports up to 10 recipients
         uint256 numRecipients = chain.length;
-        if (numRecipients > 10) {
-            numRecipients = 10;
+        if (numRecipients > MAX_PAYOUT_LEVELS) {
+            numRecipients = MAX_PAYOUT_LEVELS;
         }
 
-        // Calculate chain rewards using geometric decay over full totalAmount
         uint256[] memory chainAmounts = rewardCalculator.calculateRewards(totalAmount, numRecipients);
 
-        // Build final arrays with all chain recipients
         recipients = new address[](numRecipients);
         amounts = new uint256[](numRecipients);
         for (uint256 i = 0; i < numRecipients; i++) {

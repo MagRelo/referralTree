@@ -102,6 +102,83 @@ contract ReferralGraphTest is Test {
         referralGraph.register(address(0), user1, testGroup);
     }
 
+    function testCannotRegisterReferralRootAsUser() public {
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.InvalidUserAddress.selector);
+        referralGraph.register(referralRoot, user1, testGroup);
+    }
+
+    function testOracleCanSetSkiplisted() public {
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        vm.prank(oracle);
+        referralGraph.register(user2, user1, testGroup);
+        vm.prank(oracle);
+        referralGraph.register(user3, user2, testGroup);
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user2, testGroup, true);
+
+        assertTrue(referralGraph.isSkiplisted(user2, testGroup));
+        address[] memory skiplisted = referralGraph.getSkiplisted(testGroup);
+        assertEq(skiplisted.length, 1);
+        assertEq(skiplisted[0], user2);
+
+        address[] memory raw = referralGraph.getAncestors(user3, testGroup, 5);
+        assertEq(raw.length, 2);
+        assertEq(raw[0], user2);
+        assertEq(raw[1], user1);
+
+        address[] memory payoutAncestors = referralGraph.getPayoutAncestors(user3, testGroup, 5);
+        assertEq(payoutAncestors.length, 1);
+        assertEq(payoutAncestors[0], user1);
+
+        address[] memory payoutChain = referralGraph.getPayoutChain(user3, testGroup, 10);
+        assertEq(payoutChain.length, 2);
+        assertEq(payoutChain[0], user3);
+        assertEq(payoutChain[1], user1);
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user2, testGroup, false);
+        assertFalse(referralGraph.isSkiplisted(user2, testGroup));
+        assertEq(referralGraph.getSkiplisted(testGroup).length, 0);
+    }
+
+    function testSkiplistedSeedOmittedFromPayoutChain() public {
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        vm.prank(oracle);
+        referralGraph.register(user2, user1, testGroup);
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user2, testGroup, true);
+
+        address[] memory payoutChain = referralGraph.getPayoutChain(user2, testGroup, 10);
+        assertEq(payoutChain.length, 1);
+        assertEq(payoutChain[0], user1);
+    }
+
+    function testUnauthorizedCannotSetSkiplisted() public {
+        vm.prank(user1);
+        vm.expectRevert(IReferralGraph.UnauthorizedOracle.selector);
+        referralGraph.setSkiplisted(user2, testGroup, true);
+    }
+
+    function testCannotSkiplistZeroOrRoot() public {
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.InvalidUserAddress.selector);
+        referralGraph.setSkiplisted(address(0), testGroup, true);
+
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.InvalidUserAddress.selector);
+        referralGraph.setSkiplisted(referralRoot, testGroup, true);
+    }
+
     function testCannotRegisterZeroReferrer() public {
         vm.prank(oracle);
         vm.expectRevert(IReferralGraph.InvalidReferrerAddress.selector);
@@ -390,11 +467,22 @@ contract ReferralGraphTest is Test {
 
     /// @notice Fuzz test: Cannot register with invalid addresses
     function testFuzz_CannotRegisterWithInvalidAddresses(address user, address referrer, bytes32 groupId) public {
+        vm.prank(owner);
+        referralGraph.authorizeOracle(oracle, groupId);
+
         // Test that zero user address is rejected
         if (user == address(0)) {
             vm.prank(oracle);
             vm.expectRevert(IReferralGraph.InvalidUserAddress.selector);
             referralGraph.register(user, referrer, groupId);
+            return;
+        }
+
+        // Test that REFERRAL_ROOT as user is rejected
+        if (user == referralGraph.REFERRAL_ROOT()) {
+            vm.prank(oracle);
+            vm.expectRevert(IReferralGraph.InvalidUserAddress.selector);
+            referralGraph.register(user, referrer == address(0) ? address(1) : referrer, groupId);
             return;
         }
 
@@ -405,7 +493,7 @@ contract ReferralGraphTest is Test {
             referralGraph.register(user, referrer, groupId);
             return;
         }
-        
+
         // Test that self-referral is rejected
         if (user == referrer) {
             vm.prank(oracle);
