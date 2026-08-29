@@ -30,6 +30,9 @@ contract ReferralGraph is IReferralGraph, Owned {
     /// @notice List of skiplisted addresses per group for enumeration
     mapping(bytes32 => address[]) private _skiplistedList;
 
+    /// @notice Successful registrations per group (excludes REFERRAL_ROOT; never decrements)
+    mapping(bytes32 => uint256) private _registeredCount;
+
     /**
      * @notice Constructor
      * @param initialOwner The initial owner of the contract
@@ -164,6 +167,16 @@ contract ReferralGraph is IReferralGraph, Owned {
     }
 
     /// @inheritdoc IReferralGraph
+    function registeredCount(bytes32 groupId) external view returns (uint256) {
+        return _registeredCount[groupId];
+    }
+
+    /// @inheritdoc IReferralGraph
+    function skiplistedCount(bytes32 groupId) external view returns (uint256) {
+        return _skiplistedList[groupId].length;
+    }
+
+    /// @inheritdoc IReferralGraph
     function setSkiplisted(address user, bytes32 groupId, bool skiplisted)
         external
         onlyAuthorizedOracle(groupId)
@@ -218,7 +231,11 @@ contract ReferralGraph is IReferralGraph, Owned {
         _referrers[groupId][user] = referrer;
         _children[groupId][referrer].push(user);
 
-        emit UserRegistered(user, referrer);
+        unchecked {
+            _registeredCount[groupId] += 1;
+        }
+
+        emit UserRegistered(groupId, user, referrer);
     }
 
     /// @notice Modifier to restrict functions to oracles authorized for a group

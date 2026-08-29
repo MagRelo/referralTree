@@ -252,9 +252,16 @@ contract ReferralGraphTest is Test {
         assertEq(entries.length, 3, "Should have 3 UserRegistered events");
 
         for (uint256 i = 0; i < entries.length; i++) {
-            assertEq(entries[i].topics[0], keccak256("UserRegistered(address,address)"), "Event signature should match");
-            assertEq(address(uint160(uint256(entries[i].topics[1]))), users[i], "Event should contain correct user");
-            assertEq(address(uint160(uint256(entries[i].topics[2]))), address(0x0000000000000000000000000000000000000001), "Event should contain correct referrer");
+            assertEq(
+                entries[i].topics[0], keccak256("UserRegistered(bytes32,address,address)"), "Event signature should match"
+            );
+            assertEq(entries[i].topics[1], testGroup, "Event should contain correct groupId");
+            assertEq(address(uint160(uint256(entries[i].topics[2]))), users[i], "Event should contain correct user");
+            assertEq(
+                address(uint160(uint256(entries[i].topics[3]))),
+                address(0x0000000000000000000000000000000000000001),
+                "Event should contain correct referrer"
+            );
         }
 
         assertEq(referralGraph.getReferrer(user1, testGroup), 0x0000000000000000000000000000000000000001);
@@ -264,6 +271,133 @@ contract ReferralGraphTest is Test {
     }
 
 
+
+    function testUserRegisteredIncludesGroupIdAndDoesNotCollide() public {
+        bytes32 otherGroup = keccak256("other-group");
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+
+        vm.prank(owner);
+        referralGraph.authorizeOracle(oracle, otherGroup);
+
+        vm.recordLogs();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, otherGroup);
+
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        assertEq(entries.length, 2);
+
+        bytes32 topic0 = keccak256("UserRegistered(bytes32,address,address)");
+        assertEq(entries[0].topics[0], topic0);
+        assertEq(entries[0].topics[1], testGroup);
+        assertEq(address(uint160(uint256(entries[0].topics[2]))), user1);
+        assertEq(address(uint160(uint256(entries[0].topics[3]))), referralRoot);
+        assertEq(entries[0].data, bytes(""), "all fields are indexed");
+
+        assertEq(entries[1].topics[0], topic0);
+        assertEq(entries[1].topics[1], otherGroup);
+        assertEq(address(uint160(uint256(entries[1].topics[2]))), user1);
+        assertEq(address(uint160(uint256(entries[1].topics[3]))), referralRoot);
+        assertTrue(entries[0].topics[1] != entries[1].topics[1], "groupIds must not collide");
+    }
+
+    function testRegisteredCountIncrementsOnRegisterAndBatch() public {
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        assertEq(referralGraph.registeredCount(testGroup), 0);
+
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        assertEq(referralGraph.registeredCount(testGroup), 1);
+
+        address[] memory users = new address[](2);
+        users[0] = user2;
+        users[1] = user3;
+        vm.prank(oracle);
+        referralGraph.batchRegister(users, user1, testGroup);
+        assertEq(referralGraph.registeredCount(testGroup), 3);
+    }
+
+    function testRegisteredCountDoesNotIncrementOnRevert() public {
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        assertEq(referralGraph.registeredCount(testGroup), 1);
+
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.UserAlreadyRegistered.selector);
+        referralGraph.register(user1, referralRoot, testGroup);
+        assertEq(referralGraph.registeredCount(testGroup), 1);
+
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.SelfReferralNotAllowed.selector);
+        referralGraph.register(user2, user2, testGroup);
+        assertEq(referralGraph.registeredCount(testGroup), 1);
+
+        address[] memory users = new address[](2);
+        users[0] = user2;
+        users[1] = user1;
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.UserAlreadyRegistered.selector);
+        referralGraph.batchRegister(users, referralRoot, testGroup);
+        assertEq(referralGraph.registeredCount(testGroup), 1);
+    }
+
+    function testRegisteredCountIsPerGroupAndExcludesRoot() public {
+        bytes32 otherGroup = keccak256("other-group");
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+
+        vm.prank(owner);
+        referralGraph.authorizeOracle(oracle, otherGroup);
+
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, otherGroup);
+
+        assertEq(referralGraph.registeredCount(testGroup), 1);
+        assertEq(referralGraph.registeredCount(otherGroup), 1);
+
+        vm.prank(oracle);
+        vm.expectRevert(IReferralGraph.InvalidUserAddress.selector);
+        referralGraph.register(referralRoot, user1, testGroup);
+        assertEq(referralGraph.registeredCount(testGroup), 1);
+    }
+
+    function testSkiplistedCountTracksAddAndRemove() public {
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        vm.prank(oracle);
+        referralGraph.register(user2, user1, testGroup);
+
+        assertEq(referralGraph.skiplistedCount(testGroup), 0);
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user1, testGroup, true);
+        assertEq(referralGraph.skiplistedCount(testGroup), 1);
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user2, testGroup, true);
+        assertEq(referralGraph.skiplistedCount(testGroup), 2);
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user1, testGroup, true);
+        assertEq(referralGraph.skiplistedCount(testGroup), 2, "re-skiplist is a no-op");
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user1, testGroup, false);
+        assertEq(referralGraph.skiplistedCount(testGroup), 1);
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user3, testGroup, false);
+        assertEq(referralGraph.skiplistedCount(testGroup), 1, "unskiplist of a non-listed address is a no-op");
+
+        vm.prank(oracle);
+        referralGraph.setSkiplisted(user2, testGroup, false);
+        assertEq(referralGraph.skiplistedCount(testGroup), 0);
+    }
 
     function testUnauthorizedCannotRegister() public {
         // Try to register without being an authorized oracle

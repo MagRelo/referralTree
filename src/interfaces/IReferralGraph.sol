@@ -7,7 +7,8 @@ pragma solidity ^0.8.20;
  */
 interface IReferralGraph {
     /// @notice Emitted when a user registers with a referrer
-    event UserRegistered(address indexed user, address indexed referrer);
+    /// @dev Breaking ABI vs v1: `groupId` is indexed so indexers can attribute registrations per project
+    event UserRegistered(bytes32 indexed groupId, address indexed user, address indexed referrer);
 
     /// @notice Emitted when an oracle is authorized for a group
     event OracleAuthorized(bytes32 indexed groupId, address indexed oracle);
@@ -97,6 +98,16 @@ interface IReferralGraph {
     /// @param groupId The group to query
     /// @return Array of skiplisted addresses
     function getSkiplisted(bytes32 groupId) external view returns (address[] memory);
+
+    /// @notice Number of successfully registered users in a group (excludes REFERRAL_ROOT)
+    /// @param groupId The group to query
+    /// @return Count of registrations; never decrements
+    function registeredCount(bytes32 groupId) external view returns (uint256);
+
+    /// @notice Number of currently skiplisted addresses in a group
+    /// @param groupId The group to query
+    /// @return Length of the skiplist (no extra storage)
+    function skiplistedCount(bytes32 groupId) external view returns (uint256);
 
     /// @notice Add or remove an address from a group's skip list
     /// @param user The address to update

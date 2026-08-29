@@ -109,6 +109,14 @@ contract MockReferralGraph is IReferralGraph {
         return _skiplistedList[groupId];
     }
 
+    function registeredCount(bytes32 /* groupId */) external pure returns (uint256) {
+        return 0;
+    }
+
+    function skiplistedCount(bytes32 groupId) external view returns (uint256) {
+        return _skiplistedList[groupId].length;
+    }
+
     function setSkiplisted(address user, bytes32 groupId, bool skiplisted) external {
         if (user == address(0) || user == REFERRAL_ROOT) revert InvalidUserAddress();
 
