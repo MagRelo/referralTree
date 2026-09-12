@@ -21,7 +21,7 @@ Shared DNA with geometric referral: **path-shared residual reward**. Timing diff
 - Instrument Exchange for **fanout / bush vs chain** (eligible branching).
 - Offer optional **finder-heavy / DR** calculator beside Geometric06.
 - Qualifying action = "held the answer"; don't pay geometric on wallet-connect.
-- Stake size should track rarity/hardness of the signal (IC after tx costs).
+- Stake size should track rarity/hardness of the signal (IC after Coasean tx costs: reward must clear coordination friction for intermediaries to forward).
 - Skiplist as extinction control on bad lineages.
 
 ## Sources

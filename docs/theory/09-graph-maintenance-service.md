@@ -28,4 +28,4 @@ Watch graphs + settlements, score shape/risk, recommend or apply skiplist and po
 4. **Attack sim pack** — Mesa Sybil shapes vs calculator strategies  
 5. Opt-in shared denylist / reputation subgraph  
 
-Ties to **IC after tx costs**: detectors should price abuse ROI against gas and reward size.
+Ties to **IC after tx costs** (Coasean): as coordination friction falls, abuse ROI rises too — detectors should price farm profit against reward size *and* the falling cost of spinning up fake paths, not only against gas.

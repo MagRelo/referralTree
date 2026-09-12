@@ -5,9 +5,13 @@
 
 ## Design thesis (keep this)
 
-People will not take referral actions that are **not incentive-compatible once transaction costs are in the denominator**. The expected reward must clear gas, UX friction, and abuse cost. When transaction costs fall (L2s, batched settlements, cheaper attribution), previously uneconomic designs open up — deeper trees, finer geometric splits, agent-mediated queries, graph-maintenance loops.
+People will not take referral actions that are **not incentive-compatible once transaction costs are in the denominator**.
 
-Short label: **IC after tx costs**.
+Here **transaction costs** means the Coasean / game-theory sense: friction of search, bargaining, verification, enforcement, and coordination among agents — **not** the literal monetary cost of executing an EVM transaction. Gas fees can be one *channel* through which coordination friction falls, but they are not the thesis.
+
+Agents that can discover and act on opportunities, cheap L2 settlement rails, and blockchain transparency (public graphs, receipts, attribution that cannot be quietly rewritten) all lower those frictions. When they do, previously uneconomic incentive-compatible designs open up — deeper trees, finer geometric splits, agent-mediated queries, graph-maintenance loops.
+
+Short label: **IC after tx costs** (Coasean friction, not gas).
 
 ## What referralTree is
 
