@@ -12,7 +12,7 @@ New deploy. Live Base / Base Sepolia ReferralGraph contracts are not upgradeable
 
 - `ReferralGraph.registeredCount(groupId)` — successful registrations per group (denominator; excludes `REFERRAL_ROOT`; never decrements).
 - `ReferralGraph.skiplistedCount(groupId)` — current skiplist length without copying the array.
-- `ReferralGraph.settle` pulls an ERC20 fee from an authorized oracle, pays `getPayoutChain`, and emits `ReferralSettlement`. The graph does not keep a balance. `settlementId` is unique per group.
+- `ReferralGraph.settle` pulls an ERC20 fee from `msg.sender`, pays `getPayoutChain`, and emits `ReferralSettlement`. `msg.sender` or `tx.origin` must be an authorized oracle for the group. The graph does not keep a balance. `settlementId` is unique per group.
 
 ### Unchanged
 

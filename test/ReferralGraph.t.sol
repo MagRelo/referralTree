@@ -689,8 +689,38 @@ contract ReferralGraphTest is Test {
         referralGraph.register(user1, referralRoot, testGroup);
 
         vm.expectRevert(IReferralGraph.UnauthorizedOracle.selector);
-        vm.prank(user1);
+        vm.prank(user1, user2);
         referralGraph.settle(testGroup, bytes32("id"), user1, address(token), 1);
+    }
+
+    function testSettleAllowsAuthorizedOrigin() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        address payer = address(0xBEEF);
+        uint256 total = 1000;
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+
+        token.mint(payer, total);
+        vm.prank(payer);
+        token.approve(address(referralGraph), total);
+
+        vm.prank(payer, oracle);
+        referralGraph.settle(testGroup, bytes32("origin"), user1, address(token), total);
+
+        assertEq(token.balanceOf(payer), 0);
+        assertEq(token.balanceOf(user1), total);
+    }
+
+    function testRegisterIgnoresAuthorizedOrigin() public {
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.expectRevert(IReferralGraph.UnauthorizedOracle.selector);
+        vm.prank(user1, oracle);
+        referralGraph.register(user2, referralRoot, testGroup);
     }
 
     function testSettleRejectsReplay() public {

@@ -9,7 +9,7 @@
 - **ReferralGraph**: Attribution, skiplist, payout-chain resolution, and `settle`. Pulls the fee and forwards it in that call. Does not keep a balance.
 - **RewardCalculator**: Geometric split math (`0.6` decay, max 10, remainder to index 0). Does not hold funds.
 
-An authorized oracle approves the graph for the fee and calls `settle`. The graph pays the chain and emits `ReferralSettlement`. Incentive Exchange indexes that event (see [Indexing](#indexing-referralsettlement)).
+An authorized oracle calls `settle`, or starts the transaction that calls it. The graph pulls the fee from `msg.sender`, pays the chain, and emits `ReferralSettlement`. Incentive Exchange indexes that event (see [Indexing](#indexing-referralsettlement)).
 
 ## How It Works
 
@@ -109,7 +109,7 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 
 ### 2. Settle
 
-The caller must be an oracle authorized for `groupId` (the same check as `register`). Approve the exact fee, then one call. The graph resolves the chain, splits, pulls the tokens, pays, and emits. If a transfer fails, the call reverts and there is no event.
+`msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. `register` still requires `msg.sender` itself to be that oracle. Approve the exact fee from the address that calls `settle`, then one call. The graph resolves the chain, splits, pulls the tokens from `msg.sender`, pays, and emits. If a transfer fails, the call reverts and there is no event.
 
 ```solidity
 token.approve(address(graph), totalAmount);

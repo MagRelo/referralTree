@@ -194,7 +194,7 @@ interface IReferralGraph {
     function setRewardCalculator(address calculator) external;
 
     /// @notice Pull `totalAmount` of `token` from the caller, pay the payout chain, and emit ReferralSettlement
-    /// @dev Only an oracle authorized for `groupId`. Does not retain a token balance.
+    /// @dev `msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. The fee is pulled from `msg.sender`. Does not retain a token balance.
     /// @param groupId The referral group
     /// @param settlementId Caller-chosen idempotency key
     /// @param user Registered seed passed to getPayoutChain

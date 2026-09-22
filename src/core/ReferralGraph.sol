@@ -260,6 +260,15 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         _;
     }
 
+    /// @dev Settlement only. `msg.sender` or `tx.origin` must be an oracle for the group.
+    ///      The fee is pulled from `msg.sender`, never from `tx.origin`.
+    modifier onlySettlementOracle(bytes32 groupId) {
+        if (!_authorizedOracles[groupId][msg.sender] && !_authorizedOracles[groupId][tx.origin]) {
+            revert UnauthorizedOracle();
+        }
+        _;
+    }
+
     /// @inheritdoc IReferralGraph
     function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle(groupId) {
         _register(user, referrer, groupId);
@@ -326,7 +335,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     /// @inheritdoc IReferralGraph
     function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
         external
-        onlyAuthorizedOracle(groupId)
+        onlySettlementOracle(groupId)
         nonReentrant
     {
         if (address(rewardCalculator) == address(0)) revert RewardCalculatorNotSet();

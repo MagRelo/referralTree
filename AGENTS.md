@@ -311,7 +311,7 @@ function getAncestors(address user, bytes32 groupId, uint256 maxLevels)
 
 ### Reward Split Logic
 ```solidity
-// Authorized oracle approves the exact fee, then one call pays and emits
+// msg.sender or tx.origin is an authorized oracle. The fee is pulled from msg.sender.
 token.approve(address(referralGraph), totalAmount);
 referralGraph.settle(groupId, settlementId, user, address(token), totalAmount);
 ```

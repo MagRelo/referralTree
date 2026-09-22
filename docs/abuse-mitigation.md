@@ -17,7 +17,7 @@ Registration is oracle-gated. Only an authorized oracle can call `register` or `
 
 Referral edges are append-only. Once a user is registered in a group, their referrer cannot be changed by the current contract.
 
-**Payouts go through `ReferralGraph.settle`.** The caller must be an oracle authorized for the group. Typical flow:
+**Payouts go through `ReferralGraph.settle`.** `msg.sender` or `tx.origin` must be an oracle authorized for the group. The fee is pulled from `msg.sender`. Typical flow:
 
 1. App approves the graph for the exact referral fee.
 2. App calls `settle(groupId, settlementId, user, token, totalAmount)`.
