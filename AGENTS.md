@@ -311,10 +311,9 @@ function getAncestors(address user, bytes32 groupId, uint256 maxLevels)
 
 ### Reward Split Logic
 ```solidity
-// Integrators resolve the chain, then transfer under their own custody
-address[] memory chain = referralGraph.getPayoutChain(user, groupId, 10);
-uint256[] memory amounts = rewardCalculator.calculateRewards(totalAmount, chain.length);
-// App transfers amounts[i] to chain[i], then emits ReferralSettlement in the same tx
+// Authorized oracle approves the exact fee, then one call pays and emits
+token.approve(address(referralGraph), totalAmount);
+referralGraph.settle(groupId, settlementId, user, address(token), totalAmount);
 ```
 
 Follow these guidelines to maintain consistency and quality across the codebase.

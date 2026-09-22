@@ -25,6 +25,8 @@ contract Deploy is Script {
         vm.startBroadcast();
         graph = new ReferralGraph(owner, initialOracle, initialGroupId);
         calculator = new RewardCalculator();
+        // OWNER must be the broadcasting key; setRewardCalculator is onlyOwner.
+        graph.setRewardCalculator(address(calculator));
         vm.stopBroadcast();
 
         console.log("ReferralGraph", address(graph));

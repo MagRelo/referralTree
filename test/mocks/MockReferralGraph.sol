@@ -184,4 +184,8 @@ contract MockReferralGraph is IReferralGraph {
     function getAuthorizedOracles(bytes32 groupId) external view returns (address[] memory) {
         return _authorizedOraclesList[groupId];
     }
+
+    function setRewardCalculator(address) external {}
+
+    function settle(bytes32, bytes32, address, address, uint256) external {}
 }

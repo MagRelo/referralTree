@@ -17,11 +17,11 @@ Registration is oracle-gated. Only an authorized oracle can call `register` or `
 
 Referral edges are append-only. Once a user is registered in a group, their referrer cannot be changed by the current contract.
 
-**Payout auth and custody live in the integrating app.** Typical flow:
+**Payouts go through `ReferralGraph.settle`.** The caller must be an oracle authorized for the group. Typical flow:
 
-1. App resolves `chain = referralGraph.getPayoutChain(seed, groupId, 10)`.
-2. App resolves `amounts = rewardCalculator.calculateRewards(totalAmount, chain.length)`.
-3. App transfers (or credits) each `amounts[i]` to `chain[i]` under its own access control and replay rules.
+1. App approves the graph for the exact referral fee.
+2. App calls `settle(groupId, settlementId, user, token, totalAmount)`.
+3. The graph resolves the payout chain, splits, pulls the tokens from the caller, pays recipients, and emits `ReferralSettlement`. The same `settlementId` cannot be reused for that group.
 
 ## Payout Incentives
 

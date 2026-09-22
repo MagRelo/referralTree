@@ -6,10 +6,10 @@
 
 ## Contracts
 
-- **ReferralGraph**: Attribution, skiplist, and payout-chain resolution. Does not hold funds.
+- **ReferralGraph**: Attribution, skiplist, payout-chain resolution, and `settle`. Pulls the fee and forwards it in that call. Does not keep a balance.
 - **RewardCalculator**: Geometric split math (`0.6` decay, max 10, remainder to index 0). Does not hold funds.
 
-Your app still owns token transfers. ReferralTree does not journal payouts. Incentive Exchange indexes live paid-out from a single event your payout contract must emit in the same transaction as the transfers (see [Indexing](#indexing-referralsettlement)).
+An authorized oracle approves the graph for the fee and calls `settle`. The graph pays the chain and emits `ReferralSettlement`. Incentive Exchange indexes that event (see [Indexing](#indexing-referralsettlement)).
 
 ## How It Works
 
@@ -107,24 +107,16 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 
 **Note:** Groups are implicit - they exist once the first referral relationship is stored. A user is in a group's referral tree if they have been referred OR have referred others.
 
-### 2. Resolve Chain and Distribute Rewards
+### 2. Settle
 
-Your app contract owns auth, funding, and transfers. Use the graph + calculator as read utilities, then emit `ReferralSettlement` in the **same transaction** so Incentive Exchange can index the payout:
+The caller must be an oracle authorized for `groupId` (the same check as `register`). Approve the exact fee, then one call. The graph resolves the chain, splits, pulls the tokens, pays, and emits. If a transfer fails, the call reverts and there is no event.
 
 ```solidity
-address[] memory chain = graph.getPayoutChain(user, groupId, 10);
-require(chain.length > 0, "Empty payout chain");
-uint256[] memory amounts = calculator.calculateRewards(totalAmount, chain.length);
-
-for (uint256 i = 0; i < chain.length; i++) {
-    if (amounts[i] == 0) continue;
-    token.transfer(chain[i], amounts[i]);
-}
-
-emit ReferralSettlement(groupId, settlementId, user, address(token), totalAmount, chain, amounts);
+token.approve(address(graph), totalAmount);
+graph.settle(groupId, settlementId, user, address(token), totalAmount);
 ```
 
-Skiplisted addresses are omitted from the payout chain (no pay, no level consumed). Replay protection, event eligibility, and failure policy are your integrator’s responsibility.
+Skiplisted addresses are omitted from the payout chain (no pay, no level consumed). `settlementId` cannot be reused for that group. Approve the exact `totalAmount` for the call, not an unlimited allowance.
 
 ### 3. Skip List
 
@@ -140,17 +132,17 @@ referralGraph.setSkiplisted(user2, groupId, false);
 
 ## Indexing: `ReferralSettlement`
 
-ReferralTree does **not** record payouts. To be indexed (Incentive Exchange live stats, subgraphs, agent reputation), the **app payout contract** must emit this event in the same transaction as the referral transfers. A later backend log is not indexable as a settlement.
+`ReferralGraph.settle` emits this event after the transfers succeed. Indexers watch the graph contract. A later backend log is not a settlement.
 
 ```solidity
-/// @notice Declared mechanism split. Emit from the payout contract in the same tx as the transfers.
+/// @notice Emitted by ReferralGraph.settle
 /// @param groupId Referral group
 /// @param settlementId Caller-chosen idempotency key (e.g. keccak256(abi.encode(contestId)))
 /// @param triggerUser Seed passed to getPayoutChain
-/// @param token ERC20; use address(0) if the app paid native ETH
+/// @param token ERC20 that was pulled and forwarded
 /// @param totalAmount Referral-network fee actually transferred (not winner-pool, not gross contest)
-/// @param recipients Same order as getPayoutChain(triggerUser, groupId, 10)
-/// @param amounts Same order as RewardCalculator.calculateRewards(totalAmount, recipients.length)
+/// @param recipients Skiplist-aware payout chain, at most 10
+/// @param amounts Geometric split of totalAmount, same order as recipients
 event ReferralSettlement(
     bytes32 indexed groupId,
     bytes32 indexed settlementId,
@@ -162,12 +154,11 @@ event ReferralSettlement(
 );
 ```
 
-Copy the signature exactly. Indexers key on `topic0 = keccak256("ReferralSettlement(bytes32,bytes32,address,address,uint256,address[],uint256[])")`.
+Indexers key on `topic0 = keccak256("ReferralSettlement(bytes32,bytes32,address,address,uint256,address[],uint256[])")` at the graph address.
 
 A listing is reporting-complete when:
 
-- Every payout that matches the verified trigger emits `ReferralSettlement` in that tx
-- `recipients` / `amounts` are the chain and split actually transferred
+- Payouts go through `settle` on that graph (the event is not optional)
 - `totalAmount` is the referral-network fee (not winner-pool, not gross contest)
 - Graph oracles / skiplist policy are documented
 - IE can read `registeredCount` and `skiplistedCount` on the graph, and derive settlement count, `totalPaid(token)`, paid participants, and recency from this event

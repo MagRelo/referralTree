@@ -2,13 +2,21 @@
 pragma solidity ^0.8.20;
 
 import {Owned} from "solmate/auth/Owned.sol";
+import {ERC20} from "solmate/tokens/ERC20.sol";
+import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
+import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
+import {IRewardCalculator} from "../interfaces/IRewardCalculator.sol";
 
 /**
  * @title ReferralGraph
  * @notice Manages referral relationships in a tree structure
  */
-contract ReferralGraph is IReferralGraph, Owned {
+contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
+    using SafeTransferLib for ERC20;
+
+    /// @notice Maximum paid recipients, matching RewardCalculator
+    uint256 public constant MAX_PAYOUT_LEVELS = 10;
     /// @notice Special address representing the root of all referral trees
     address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
@@ -32,6 +40,12 @@ contract ReferralGraph is IReferralGraph, Owned {
 
     /// @notice Successful registrations per group (excludes REFERRAL_ROOT; never decrements)
     mapping(bytes32 => uint256) private _registeredCount;
+
+    /// @notice Geometric split used by settle
+    IRewardCalculator public rewardCalculator;
+
+    /// @notice groupId => settlementId => already settled
+    mapping(bytes32 => mapping(bytes32 => bool)) private _settled;
 
     /**
      * @notice Constructor
@@ -300,5 +314,48 @@ contract ReferralGraph is IReferralGraph, Owned {
     /// @inheritdoc IReferralGraph
     function getAuthorizedOracles(bytes32 groupId) external view returns (address[] memory) {
         return _authorizedOraclesList[groupId];
+    }
+
+    /// @inheritdoc IReferralGraph
+    function setRewardCalculator(address calculator) external onlyOwner {
+        if (calculator == address(0)) revert InvalidRewardCalculator();
+        rewardCalculator = IRewardCalculator(calculator);
+        emit RewardCalculatorSet(calculator);
+    }
+
+    /// @inheritdoc IReferralGraph
+    function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
+        external
+        onlyAuthorizedOracle(groupId)
+        nonReentrant
+    {
+        if (address(rewardCalculator) == address(0)) revert RewardCalculatorNotSet();
+        if (token == address(0)) revert InvalidToken();
+        if (totalAmount == 0) revert InvalidAmount();
+        if (user == address(0) || user == REFERRAL_ROOT) revert InvalidUserAddress();
+        if (_referrers[groupId][user] == address(0)) revert UserNotRegistered();
+        if (_settled[groupId][settlementId]) revert SettlementAlreadyUsed();
+
+        address[] memory chain = this.getPayoutChain(user, groupId, MAX_PAYOUT_LEVELS);
+        if (chain.length == 0) revert EmptyPayoutChain();
+
+        uint256[] memory amounts = rewardCalculator.calculateRewards(totalAmount, chain.length);
+        if (amounts.length != chain.length) revert InvalidSplit();
+
+        uint256 sum;
+        for (uint256 i = 0; i < amounts.length; i++) {
+            sum += amounts[i];
+        }
+        if (sum != totalAmount) revert InvalidSplit();
+
+        _settled[groupId][settlementId] = true;
+
+        ERC20 payoutToken = ERC20(token);
+        for (uint256 i = 0; i < chain.length; i++) {
+            if (amounts[i] == 0) continue;
+            payoutToken.safeTransferFrom(msg.sender, chain[i], amounts[i]);
+        }
+
+        emit ReferralSettlement(groupId, settlementId, user, token, totalAmount, chain, amounts);
     }
 }

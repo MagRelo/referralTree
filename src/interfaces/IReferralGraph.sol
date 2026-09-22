@@ -22,6 +22,21 @@ interface IReferralGraph {
     /// @notice Emitted when an address is removed from a group's skip list
     event AddressUnskiplisted(bytes32 indexed groupId, address indexed user);
 
+    /// @notice Emitted when an authorized oracle settles a payout through the graph
+    /// @dev topic0 is stable for indexers. Recipients are the skiplist-aware payout chain.
+    event ReferralSettlement(
+        bytes32 indexed groupId,
+        bytes32 indexed settlementId,
+        address indexed triggerUser,
+        address token,
+        uint256 totalAmount,
+        address[] recipients,
+        uint256[] amounts
+    );
+
+    /// @notice Emitted when the owner sets the reward calculator used by settle
+    event RewardCalculatorSet(address indexed calculator);
+
     /// @notice Error when user address is invalid (zero address)
     error InvalidUserAddress();
 
@@ -42,6 +57,30 @@ interface IReferralGraph {
 
     /// @notice Error when caller is not an authorized oracle
     error UnauthorizedOracle();
+
+    /// @notice Error when settle is called before a reward calculator is set
+    error RewardCalculatorNotSet();
+
+    /// @notice Error when the reward calculator address is zero
+    error InvalidRewardCalculator();
+
+    /// @notice Error when the payout token is the zero address
+    error InvalidToken();
+
+    /// @notice Error when the settlement amount is zero
+    error InvalidAmount();
+
+    /// @notice Error when the trigger user is not registered in the group
+    error UserNotRegistered();
+
+    /// @notice Error when getPayoutChain returns no recipients
+    error EmptyPayoutChain();
+
+    /// @notice Error when this settlementId was already used for the group
+    error SettlementAlreadyUsed();
+
+    /// @notice Error when the calculator split does not match the payout chain
+    error InvalidSplit();
 
     /// @notice Get the referrer of a user in a group
     /// @param user The user to query
@@ -149,4 +188,18 @@ interface IReferralGraph {
     /// @param groupId The group to query
     /// @return Array of authorized oracle addresses for the group
     function getAuthorizedOracles(bytes32 groupId) external view returns (address[] memory);
+
+    /// @notice Set the reward calculator. Only the owner.
+    /// @param calculator RewardCalculator address
+    function setRewardCalculator(address calculator) external;
+
+    /// @notice Pull `totalAmount` of `token` from the caller, pay the payout chain, and emit ReferralSettlement
+    /// @dev Only an oracle authorized for `groupId`. Does not retain a token balance.
+    /// @param groupId The referral group
+    /// @param settlementId Caller-chosen idempotency key
+    /// @param user Registered seed passed to getPayoutChain
+    /// @param token ERC20 to pull and forward
+    /// @param totalAmount Referral-network fee. Caller must approve this contract for at least this amount.
+    function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
+        external;
 }

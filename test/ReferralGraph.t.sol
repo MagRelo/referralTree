@@ -4,6 +4,8 @@ pragma solidity ^0.8.20;
 import {Test, Vm} from "forge-std/Test.sol";
 import {ReferralGraph} from "../src/core/ReferralGraph.sol";
 import {IReferralGraph} from "../src/interfaces/IReferralGraph.sol";
+import {RewardCalculator} from "../src/core/RewardCalculator.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract ReferralGraphTest is Test {
     ReferralGraph public referralGraph;
@@ -635,5 +637,121 @@ contract ReferralGraphTest is Test {
             referralGraph.register(user, referrer, groupId);
             return;
         }
+    }
+
+    function testSettlePaysPayoutChain() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+
+        vm.startPrank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        referralGraph.register(user3, user2, testGroup);
+        vm.stopPrank();
+
+        uint256 total = 1_000_000;
+        token.mint(oracle, total);
+        vm.prank(oracle);
+        token.approve(address(referralGraph), total);
+
+        address[] memory chain = referralGraph.getPayoutChain(user3, testGroup, 10);
+        uint256[] memory amounts = calculator.calculateRewards(total, chain.length);
+        bytes32 settlementId = keccak256("contest-1");
+
+        vm.expectEmit(true, true, true, true, address(referralGraph));
+        emit IReferralGraph.ReferralSettlement(testGroup, settlementId, user3, address(token), total, chain, amounts);
+
+        vm.prank(oracle);
+        referralGraph.settle(testGroup, settlementId, user3, address(token), total);
+
+        assertEq(token.balanceOf(oracle), 0);
+        uint256 paid;
+        for (uint256 i = 0; i < chain.length; i++) {
+            assertEq(token.balanceOf(chain[i]), amounts[i]);
+            paid += amounts[i];
+        }
+        assertEq(paid, total);
+        assertEq(token.balanceOf(address(referralGraph)), 0);
+    }
+
+    function testSettleOnlyAuthorizedOracle() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+
+        vm.expectRevert(IReferralGraph.UnauthorizedOracle.selector);
+        vm.prank(user1);
+        referralGraph.settle(testGroup, bytes32("id"), user1, address(token), 1);
+    }
+
+    function testSettleRejectsReplay() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        uint256 total = 1000;
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+
+        token.mint(oracle, total * 2);
+        vm.startPrank(oracle);
+        token.approve(address(referralGraph), total * 2);
+        referralGraph.settle(testGroup, bytes32("id"), user1, address(token), total);
+        vm.expectRevert(IReferralGraph.SettlementAlreadyUsed.selector);
+        referralGraph.settle(testGroup, bytes32("id"), user1, address(token), total);
+        vm.stopPrank();
+    }
+
+    function testSettleRejectsEmptyChain() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.startPrank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.setSkiplisted(user1, testGroup, true);
+        vm.expectRevert(IReferralGraph.EmptyPayoutChain.selector);
+        referralGraph.settle(testGroup, bytes32("id"), user1, address(token), 1000);
+        vm.stopPrank();
+    }
+
+    function testSettleOmitsSkiplisted() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        vm.startPrank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        referralGraph.register(user3, user2, testGroup);
+        referralGraph.setSkiplisted(user2, testGroup, true);
+        vm.stopPrank();
+
+        uint256 total = 10_000;
+        token.mint(oracle, total);
+        vm.startPrank(oracle);
+        token.approve(address(referralGraph), total);
+        referralGraph.settle(testGroup, bytes32("id"), user3, address(token), total);
+        vm.stopPrank();
+
+        assertEq(token.balanceOf(user2), 0);
+        assertGt(token.balanceOf(user3), 0);
+        assertGt(token.balanceOf(user1), 0);
+        assertEq(token.balanceOf(user1) + token.balanceOf(user3), total);
     }
 }

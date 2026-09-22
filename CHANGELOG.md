@@ -12,10 +12,10 @@ New deploy. Live Base / Base Sepolia ReferralGraph contracts are not upgradeable
 
 - `ReferralGraph.registeredCount(groupId)` — successful registrations per group (denominator; excludes `REFERRAL_ROOT`; never decrements).
 - `ReferralGraph.skiplistedCount(groupId)` — current skiplist length without copying the array.
-- Canonical `ReferralSettlement` event for integrators. ReferralTree does not journal payouts; Incentive Exchange indexes this event when the payout contract emits it in the same transaction as the transfers.
+- `ReferralGraph.settle` pulls an ERC20 fee from an authorized oracle, pays `getPayoutChain`, and emits `ReferralSettlement`. The graph does not keep a balance. `settlementId` is unique per group.
 
 ### Unchanged
 
 - Geometric split math (`0.6`, max 10, remainder to index 0).
-- Graph does not hold or transfer tokens.
+- Graph does not retain a token balance between transactions.
 - No on-chain settlement journal, no `RewardDistributor` payout path, no `getAllUsers` / unbounded node enumeration, no `nodeCount` headline.
