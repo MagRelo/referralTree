@@ -40,8 +40,8 @@ interface IReferralGraph {
     /// @notice Emitted when the owner sets the global protocol fee
     event ProtocolFeeSet(uint16 bps, address indexed recipient);
 
-    /// @notice Emitted when settle charges the protocol fee to the caller
-    /// @dev Separate from ReferralSettlement. totalAmount on that event is still the referral-network fee.
+    /// @notice Emitted when settle takes the protocol fee from the settle total
+    /// @dev Separate from ReferralSettlement. That event's totalAmount is the referral distributable (gross settle amount minus fee).
     event ProtocolFeeCharged(
         bytes32 indexed groupId,
         bytes32 indexed settlementId,
@@ -220,17 +220,17 @@ interface IReferralGraph {
 
     /// @notice Set the global protocol fee. Only the owner.
     /// @dev `bps == 0` charges nothing. A non-zero fee requires a recipient.
-    /// @param bps Fee in basis points of `totalAmount`, charged on top of the referral payout
+    /// @param bps Fee in basis points of `totalAmount`, deducted from the settle total before the referral split
     /// @param recipient Address that receives the protocol fee
     function setProtocolFee(uint16 bps, address recipient) external;
 
-    /// @notice Pull `totalAmount` of `token` from the caller, pay the payout chain, and emit ReferralSettlement
-    /// @dev `msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. Referral payouts and any protocol fee are pulled from `msg.sender` in this transaction. Does not retain a token balance.
+    /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from that amount, pay the remainder to the payout chain, and emit ReferralSettlement
+    /// @dev `msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. The full `totalAmount` (fee + referral split) is pulled from `msg.sender` in this transaction. Does not retain a token balance.
     /// @param groupId The referral group
     /// @param settlementId Caller-chosen idempotency key
     /// @param user Registered seed passed to getPayoutChain
     /// @param token ERC20 to pull and forward
-    /// @param totalAmount Referral-network fee. Caller must also approve the protocol fee (`totalAmount * feeBps / 10000`) when `feeBps` is non-zero.
+    /// @param totalAmount Gross settle amount. Protocol fee (if any) is deducted first; the remainder is split across the referral chain. Caller approves exactly `totalAmount`.
     function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
         external;
 }

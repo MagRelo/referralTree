@@ -111,15 +111,14 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 
 `msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. `register` still requires `msg.sender` itself to be that oracle. Approve from the address that calls `settle`, then one call. The graph resolves the chain, splits, pulls the tokens from `msg.sender`, pays, and emits. If a transfer fails, the call reverts and there is no event.
 
-The global protocol fee defaults to **0**. When the owner sets `feeBps`, settle also pulls `totalAmount * feeBps / 10000` from `msg.sender` to `feeRecipient`, on top of the referral split. `ReferralSettlement.totalAmount` remains the referral-network fee.
+The global protocol fee defaults to **0**. When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.totalAmount` is the referral distributable (`totalAmount - protocolFee`).
 
 ```solidity
-uint256 protocolFee = totalAmount * graph.feeBps() / 10_000;
-token.approve(address(graph), totalAmount + protocolFee);
+token.approve(address(graph), totalAmount);
 graph.settle(groupId, settlementId, user, address(token), totalAmount);
 ```
 
-Skiplisted addresses are omitted from the payout chain (no pay, no level consumed). `settlementId` cannot be reused for that group. Approve the exact `totalAmount + protocolFee` for the call, not an unlimited allowance.
+Skiplisted addresses are omitted from the payout chain (no pay, no level consumed). `settlementId` cannot be reused for that group. Approve the exact `totalAmount` for the call, not an unlimited allowance.
 
 ### 3. Skip List
 
@@ -227,7 +226,7 @@ referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
 - `skiplistedCount(bytes32 groupId)` - Current skiplist length (no extra storage)
 - `setRewardCalculator(address calculator)` - Set the geometric splitter used by `settle` (owner only)
 - `settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)` - Pull the referral fee from `msg.sender`, pay the payout chain, emit `ReferralSettlement`
-- `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, charged on top of the referral payout (owner only; defaults to 0)
+- `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, deducted from the settle total before the referral split (owner only; defaults to 0)
 - `feeBps()` / `feeRecipient()` - Current protocol fee config
 
 `UserRegistered` is `event UserRegistered(bytes32 indexed groupId, address indexed user, address indexed referrer)` (**breaking ABI** vs v1; any subgraph / listener must be updated).
