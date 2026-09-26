@@ -135,7 +135,7 @@ Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 t
 - **7702:** a delegated EOA's own key always remains valid via step 1; the delegate cannot revoke it.
 - **Not supported:** ERC-6492 (signatures from not-yet-deployed wallets) — a contract oracle must be deployed.
 
-The global protocol fee defaults to **0** and is hard-capped at `MAX_FEE_BPS` (1000 bps = 10%). When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.totalAmount` is the referral distributable (`totalAmount - protocolFee`).
+The global protocol fee defaults to **0** and is hard-capped at `MAX_FEE_BPS` (1000 bps = 10%). When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.distributedAmount` is the net referral amount (`totalAmount - protocolFee`); `distributedAmount + ProtocolFeeCharged.amount == totalAmount`.
 
 ```solidity
 // Off-chain: oracle signs Settle{groupId, settlementId, user, token, totalAmount, payer, deadline}
@@ -169,26 +169,28 @@ referralGraph.setSkiplisted(user2, groupId, false);
 /// @param settlementId Caller-chosen idempotency key (e.g. keccak256(abi.encode(contestId)))
 /// @param triggerUser Seed passed to getPayoutChain
 /// @param token ERC20 that was pulled and forwarded
-/// @param totalAmount Referral-network fee actually transferred (not winner-pool, not gross contest)
+/// @param distributedAmount Net referral amount actually transferred to recipients (settle totalAmount minus protocol fee; not winner-pool, not gross contest)
 /// @param recipients Skiplist-aware payout chain, at most 10
-/// @param amounts Geometric split of totalAmount, same order as recipients
+/// @param amounts Geometric split of distributedAmount, same order as recipients (sums to distributedAmount)
 event ReferralSettlement(
     bytes32 indexed groupId,
     bytes32 indexed settlementId,
     address indexed triggerUser,
     address token,
-    uint256 totalAmount,
+    uint256 distributedAmount,
     address[] recipients,
     uint256[] amounts
 );
 ```
 
-Indexers key on `topic0 = keccak256("ReferralSettlement(bytes32,bytes32,address,address,uint256,address[],uint256[])")` at the graph address.
+Indexers key on `topic0 = keccak256("ReferralSettlement(bytes32,bytes32,address,address,uint256,address[],uint256[])")` = `0xc1d7413a8f588edf973af385db8ba0409e45acbef501d8191166c42dd88ce3b3` at the graph address. (The fifth field was renamed from `totalAmount` to `distributedAmount`; parameter names are not part of topic0, so the selector and log encoding are unchanged — only ABI-JSON-based decoders see the new name.)
+
+**Amounts and the protocol fee.** `distributedAmount` is net of the protocol fee. When a fee is charged, the same transaction also emits `ProtocolFeeCharged(groupId, settlementId, token, recipient, amount)`, and `distributedAmount + ProtocolFeeCharged.amount == settle totalAmount` (gross). Referral paid-out = sum of `distributedAmount`; gross settle volume = paid-out + sum of `ProtocolFeeCharged.amount` (join on `groupId`/`settlementId`). Don't add the fee to `distributedAmount` and call it paid-out.
 
 A listing is reporting-complete when:
 
 - Payouts go through `settle` on that graph (the event is not optional)
-- `totalAmount` is the referral-network fee (not winner-pool, not gross contest)
+- `distributedAmount` is the referral-network amount paid to the chain (net of any protocol fee; not winner-pool, not gross contest)
 - Graph oracles / skiplist policy are documented
 - IE can read `registeredCount` and `skiplistedCount` on the graph, and derive settlement count, `totalPaid(token)`, paid participants, and recency from this event
 

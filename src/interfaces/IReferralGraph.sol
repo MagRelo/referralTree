@@ -24,12 +24,16 @@ interface IReferralGraph {
 
     /// @notice Emitted when an authorized oracle settles a payout through the graph
     /// @dev topic0 is stable for indexers. Recipients are the skiplist-aware payout chain.
+    ///      `distributedAmount` is the net amount split across `recipients` (sum of `amounts`), i.e. the gross settle
+    ///      `totalAmount` minus the protocol fee. `distributedAmount + ProtocolFeeCharged.amount == totalAmount` (gross);
+    ///      when no fee is charged there is no ProtocolFeeCharged event and `distributedAmount == totalAmount`.
+    /// @param distributedAmount Net referral amount paid to `recipients` (excludes the protocol fee)
     event ReferralSettlement(
         bytes32 indexed groupId,
         bytes32 indexed settlementId,
         address indexed triggerUser,
         address token,
-        uint256 totalAmount,
+        uint256 distributedAmount,
         address[] recipients,
         uint256[] amounts
     );
@@ -41,7 +45,9 @@ interface IReferralGraph {
     event ProtocolFeeSet(uint16 bps, address indexed recipient);
 
     /// @notice Emitted when settle takes the protocol fee from the settle total
-    /// @dev Separate from ReferralSettlement. That event's totalAmount is the referral distributable (gross settle amount minus fee).
+    /// @dev Emitted in the same settle as ReferralSettlement (same groupId/settlementId), only when the fee is non-zero.
+    ///      `ReferralSettlement.distributedAmount + amount == totalAmount` (gross settle amount). To get gross volume,
+    ///      sum both; do not add `amount` to a gross figure.
     event ProtocolFeeCharged(
         bytes32 indexed groupId, bytes32 indexed settlementId, address indexed token, address recipient, uint256 amount
     );

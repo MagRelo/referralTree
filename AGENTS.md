@@ -315,6 +315,7 @@ function getAncestors(address user, bytes32 groupId, uint256 maxLevels)
 //   Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)
 // `payer` submits (payer == msg.sender; tokens are pulled from msg.sender). settlementId is the nonce.
 // Protocol fee defaults to 0; when set, it is deducted from totalAmount (approve exactly totalAmount).
+// ReferralSettlement.distributedAmount = totalAmount - fee; ProtocolFeeCharged.amount = fee (only if > 0).
 token.approve(address(referralGraph), totalAmount);
 // signature: abi.encodePacked(r, s, v) / 64-byte EIP-2098 from oracle's key (EOA or 7702 EOA), else an ERC-1271 blob.
 referralGraph.settle(groupId, settlementId, user, address(token), totalAmount, deadline, oracle, signature);

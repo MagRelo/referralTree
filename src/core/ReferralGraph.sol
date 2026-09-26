@@ -386,7 +386,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
 
         // Deduct protocol fee from the settle total up front. Caller pays `totalAmount` only.
         uint256 protocolFee = _protocolFee(totalAmount);
-        uint256 distributable = totalAmount - protocolFee;
+        uint256 distributable = totalAmount - protocolFee; // emitted as ReferralSettlement.distributedAmount
 
         address[] memory chain = this.getPayoutChain(user, groupId, MAX_PAYOUT_LEVELS);
         if (chain.length == 0) revert EmptyPayoutChain();

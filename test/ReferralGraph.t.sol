@@ -1633,4 +1633,67 @@ contract ReferralGraphTest is Test {
             keccak256(abi.encode(SETTLE_TYPEHASH, testGroup, id, user3, token, SIG_TOTAL, payer, deadline));
         return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
     }
+
+    /*//////////////////////////////////////////////////////////////
+                    SETTLEMENT EVENT AMOUNT SEMANTICS
+    //////////////////////////////////////////////////////////////*/
+
+    bytes32 internal constant REFERRAL_SETTLEMENT_TOPIC0 =
+        0xc1d7413a8f588edf973af385db8ba0409e45acbef501d8191166c42dd88ce3b3;
+
+    function testReferralSettlementTopic0Unchanged() public pure {
+        assertEq(IReferralGraph.ReferralSettlement.selector, REFERRAL_SETTLEMENT_TOPIC0);
+        assertEq(
+            keccak256("ReferralSettlement(bytes32,bytes32,address,address,uint256,address[],uint256[])"),
+            REFERRAL_SETTLEMENT_TOPIC0
+        );
+    }
+
+    /// @dev distributedAmount + ProtocolFeeCharged.amount == gross totalAmount; sum(amounts) == distributedAmount.
+    function testFuzz_SettlementEventAmountsSumToGross(uint256 total, uint16 bps) public {
+        total = bound(total, 1, 1e30);
+        bps = uint16(bound(bps, 0, referralGraph.MAX_FEE_BPS()));
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        token.mint(payer, total);
+        vm.prank(payer);
+        token.approve(address(referralGraph), total);
+        address feeTo = address(0xFEE);
+        vm.prank(owner);
+        referralGraph.setProtocolFee(bps, feeTo);
+
+        vm.recordLogs();
+        _settleSigned(payer, testGroup, bytes32("ev"), user3, address(token), total);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bool sawSettlement;
+        bool sawFee;
+        uint256 distributedAmount;
+        uint256 feeAmount;
+        uint256 sumAmounts;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter != address(referralGraph)) continue;
+            if (logs[i].topics[0] == REFERRAL_SETTLEMENT_TOPIC0) {
+                sawSettlement = true;
+                address[] memory recipients;
+                uint256[] memory amounts;
+                (, distributedAmount, recipients, amounts) =
+                    abi.decode(logs[i].data, (address, uint256, address[], uint256[]));
+                for (uint256 j = 0; j < amounts.length; j++) {
+                    sumAmounts += amounts[j];
+                }
+            } else if (logs[i].topics[0] == IReferralGraph.ProtocolFeeCharged.selector) {
+                sawFee = true;
+                (, feeAmount) = abi.decode(logs[i].data, (address, uint256));
+            }
+        }
+
+        uint256 expectedFee = (total * bps) / 10_000;
+        assertTrue(sawSettlement);
+        assertEq(sawFee, expectedFee > 0);
+        assertEq(feeAmount, expectedFee);
+        assertEq(distributedAmount + feeAmount, total);
+        assertEq(sumAmounts, distributedAmount);
+        assertEq(token.balanceOf(feeTo), feeAmount);
+    }
 }
