@@ -24,12 +24,16 @@ interface IReferralGraph {
 
     /// @notice Emitted when an authorized oracle settles a payout through the graph
     /// @dev topic0 is stable for indexers. Recipients are the skiplist-aware payout chain.
+    ///      `distributedAmount` is the net amount split across `recipients` (sum of `amounts`), i.e. the gross settle
+    ///      `totalAmount` minus the protocol fee. `distributedAmount + ProtocolFeeCharged.amount == totalAmount` (gross);
+    ///      when no fee is charged there is no ProtocolFeeCharged event and `distributedAmount == totalAmount`.
+    /// @param distributedAmount Net referral amount paid to `recipients` (excludes the protocol fee)
     event ReferralSettlement(
         bytes32 indexed groupId,
         bytes32 indexed settlementId,
         address indexed triggerUser,
         address token,
-        uint256 totalAmount,
+        uint256 distributedAmount,
         address[] recipients,
         uint256[] amounts
     );
@@ -41,13 +45,11 @@ interface IReferralGraph {
     event ProtocolFeeSet(uint16 bps, address indexed recipient);
 
     /// @notice Emitted when settle takes the protocol fee from the settle total
-    /// @dev Separate from ReferralSettlement. That event's totalAmount is the referral distributable (gross settle amount minus fee).
+    /// @dev Emitted in the same settle as ReferralSettlement (same groupId/settlementId), only when the fee is non-zero.
+    ///      `ReferralSettlement.distributedAmount + amount == totalAmount` (gross settle amount). To get gross volume,
+    ///      sum both; do not add `amount` to a gross figure.
     event ProtocolFeeCharged(
-        bytes32 indexed groupId,
-        bytes32 indexed settlementId,
-        address indexed token,
-        address recipient,
-        uint256 amount
+        bytes32 indexed groupId, bytes32 indexed settlementId, address indexed token, address recipient, uint256 amount
     );
 
     /// @notice Error when user address is invalid (zero address)
@@ -95,11 +97,17 @@ interface IReferralGraph {
     /// @notice Error when the calculator split does not match the payout chain
     error InvalidSplit();
 
-    /// @notice Error when the protocol fee is above 100%
+    /// @notice Error when the protocol fee is above MAX_FEE_BPS (10%)
     error FeeTooHigh();
 
     /// @notice Error when a non-zero protocol fee has no recipient
     error InvalidFeeRecipient();
+
+    /// @notice Error when a settle signature is past its deadline
+    error SignatureExpired();
+
+    /// @notice Error when the claimed settle oracle is not authorized for the group or its signature is invalid
+    error InvalidSigner();
 
     /// @notice Get the referrer of a user in a group
     /// @param user The user to query
@@ -212,25 +220,49 @@ interface IReferralGraph {
     /// @param calculator RewardCalculator address
     function setRewardCalculator(address calculator) external;
 
-    /// @notice Global protocol fee in basis points. 10000 = 100%. Defaults to 0.
+    /// @notice Global protocol fee in basis points. 10000 = 100%; capped at MAX_FEE_BPS (1000 = 10%). Defaults to 0.
     function feeBps() external view returns (uint16);
 
     /// @notice Recipient of the protocol fee charged on settle
     function feeRecipient() external view returns (address);
 
     /// @notice Set the global protocol fee. Only the owner.
-    /// @dev `bps == 0` charges nothing. A non-zero fee requires a recipient.
+    /// @dev `bps == 0` charges nothing. A non-zero fee requires a recipient. Reverts with FeeTooHigh above MAX_FEE_BPS (1000 = 10%).
     /// @param bps Fee in basis points of `totalAmount`, deducted from the settle total before the referral split
     /// @param recipient Address that receives the protocol fee
     function setProtocolFee(uint16 bps, address recipient) external;
 
+    /// @notice EIP-712 domain separator for oracle-signed settlements (name "ReferralGraph", version "1")
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+
+    /// @notice EIP-712 typehash:
+    ///         Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)
+    function SETTLE_TYPEHASH() external view returns (bytes32);
+
     /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from that amount, pay the remainder to the payout chain, and emit ReferralSettlement
-    /// @dev `msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. The full `totalAmount` (fee + referral split) is pulled from `msg.sender` in this transaction. Does not retain a token balance.
+    /// @dev Authorization is an EIP-712 `Settle` signature from `oracle`, which must be authorized for `groupId` (checked at
+    ///      execution time, so unauthorizing an oracle invalidates its outstanding signatures). A 65- or 64-byte
+    ///      (EIP-2098) signature is first checked with ecrecover against `oracle` (so EOAs, including EIP-7702-delegated
+    ///      EOAs, work with plain ECDSA); if that does not match and `oracle` has code, ERC-1271 `isValidSignature` is
+    ///      used (no ERC-6492). Anyone may submit, but the signed `payer` must equal `msg.sender`, and the full `totalAmount`
+    ///      is pulled from `msg.sender`. `settlementId` is the nonce: each id settles at most once per group.
+    ///      Does not retain a token balance.
     /// @param groupId The referral group
-    /// @param settlementId Caller-chosen idempotency key
+    /// @param settlementId Oracle-chosen idempotency key / signature nonce
     /// @param user Registered seed passed to getPayoutChain
     /// @param token ERC20 to pull and forward
     /// @param totalAmount Gross settle amount. Protocol fee (if any) is deducted first; the remainder is split across the referral chain. Caller approves exactly `totalAmount`.
-    function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
-        external;
+    /// @param deadline Last timestamp (inclusive) at which the signature is valid
+    /// @param oracle Oracle that signed (EOA or ERC-1271 contract); must be authorized for `groupId`
+    /// @param signature ECDSA signature (EOA oracle) or ERC-1271 signature blob (contract oracle) over the Settle digest
+    function settle(
+        bytes32 groupId,
+        bytes32 settlementId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline,
+        address oracle,
+        bytes calldata signature
+    ) external;
 }

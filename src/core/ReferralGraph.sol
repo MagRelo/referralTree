@@ -7,6 +7,7 @@ import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
 import {IRewardCalculator} from "../interfaces/IRewardCalculator.sol";
+import {IERC1271} from "../interfaces/IERC1271.sol";
 
 /**
  * @title ReferralGraph
@@ -19,6 +20,8 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     uint256 public constant MAX_PAYOUT_LEVELS = 10;
     /// @notice Basis-point denominator. 10000 bps = 100%.
     uint256 public constant BPS_DENOMINATOR = 10_000;
+    /// @notice Hard cap on the protocol fee. 1000 bps = 10%.
+    uint256 public constant MAX_FEE_BPS = 1_000;
     /// @notice Special address representing the root of all referral trees
     address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
@@ -52,8 +55,22 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     /// @notice Recipient of the protocol fee charged on settle
     address public feeRecipient;
 
-    /// @notice groupId => settlementId => already settled
+    /// @notice groupId => settlementId => already settled. Doubles as the EIP-712 settle nonce.
     mapping(bytes32 => mapping(bytes32 => bool)) private _settled;
+
+    /*//////////////////////////////////////////////////////////////
+                            EIP-712 STORAGE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice EIP-712 typehash for an oracle-signed settlement
+    /// @dev `payer` is the address that submits `settle` and whose tokens are pulled (`msg.sender`).
+    bytes32 public constant SETTLE_TYPEHASH = keccak256(
+        "Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)"
+    );
+
+    uint256 internal immutable INITIAL_CHAIN_ID;
+
+    bytes32 internal immutable INITIAL_DOMAIN_SEPARATOR;
 
     /**
      * @notice Constructor
@@ -62,6 +79,9 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
      * @param initialGroupId Group to authorize the initial oracle for
      */
     constructor(address initialOwner, address initialOracle, bytes32 initialGroupId) Owned(initialOwner) {
+        INITIAL_CHAIN_ID = block.chainid;
+        INITIAL_DOMAIN_SEPARATOR = computeDomainSeparator();
+
         if (initialOracle != address(0)) {
             _authorizedOracles[initialGroupId][initialOracle] = true;
             _authorizedOraclesList[initialGroupId].push(initialOracle);
@@ -268,15 +288,6 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         _;
     }
 
-    /// @dev Settlement only. `msg.sender` or `tx.origin` must be an oracle for the group.
-    ///      Tokens (including any protocol fee share of `totalAmount`) are pulled from `msg.sender`, never from `tx.origin`.
-    modifier onlySettlementOracle(bytes32 groupId) {
-        if (!_authorizedOracles[groupId][msg.sender] && !_authorizedOracles[groupId][tx.origin]) {
-            revert UnauthorizedOracle();
-        }
-        _;
-    }
-
     /// @inheritdoc IReferralGraph
     function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle(groupId) {
         _register(user, referrer, groupId);
@@ -342,7 +353,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
 
     /// @inheritdoc IReferralGraph
     function setProtocolFee(uint16 bps, address recipient) external onlyOwner {
-        if (bps > BPS_DENOMINATOR) revert FeeTooHigh();
+        if (bps > MAX_FEE_BPS) revert FeeTooHigh();
         if (bps > 0 && recipient == address(0)) revert InvalidFeeRecipient();
         feeBps = bps;
         feeRecipient = recipient;
@@ -350,11 +361,22 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     }
 
     /// @inheritdoc IReferralGraph
-    function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
-        external
-        onlySettlementOracle(groupId)
-        nonReentrant
-    {
+    function settle(
+        bytes32 groupId,
+        bytes32 settlementId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline,
+        address oracle,
+        bytes calldata signature
+    ) external nonReentrant {
+        if (block.timestamp > deadline) revert SignatureExpired();
+        if (!_authorizedOracles[groupId][oracle]) revert InvalidSigner();
+
+        bytes32 digest = _settleDigest(groupId, settlementId, user, token, totalAmount, deadline);
+        if (!_isValidOracleSignature(oracle, digest, signature)) revert InvalidSigner();
+
         if (address(rewardCalculator) == address(0)) revert RewardCalculatorNotSet();
         if (token == address(0)) revert InvalidToken();
         if (totalAmount == 0) revert InvalidAmount();
@@ -364,7 +386,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
 
         // Deduct protocol fee from the settle total up front. Caller pays `totalAmount` only.
         uint256 protocolFee = _protocolFee(totalAmount);
-        uint256 distributable = totalAmount - protocolFee;
+        uint256 distributable = totalAmount - protocolFee; // emitted as ReferralSettlement.distributedAmount
 
         address[] memory chain = this.getPayoutChain(user, groupId, MAX_PAYOUT_LEVELS);
         if (chain.length == 0) revert EmptyPayoutChain();
@@ -392,6 +414,101 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         }
 
         emit ReferralSettlement(groupId, settlementId, user, token, distributable, chain, amounts);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             EIP-712 LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice EIP-712 domain separator (name "ReferralGraph", version "1"). Recomputed if the chain id changes (fork).
+    function DOMAIN_SEPARATOR() public view virtual returns (bytes32) {
+        return block.chainid == INITIAL_CHAIN_ID ? INITIAL_DOMAIN_SEPARATOR : computeDomainSeparator();
+    }
+
+    function computeDomainSeparator() internal view virtual returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("ReferralGraph")),
+                keccak256("1"),
+                block.chainid,
+                address(this)
+            )
+        );
+    }
+
+    /// @dev EIP-712 digest of a Settle struct with `payer = msg.sender`.
+    function _settleDigest(
+        bytes32 groupId,
+        bytes32 settlementId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                DOMAIN_SEPARATOR(),
+                keccak256(
+                    abi.encode(SETTLE_TYPEHASH, groupId, settlementId, user, token, totalAmount, msg.sender, deadline)
+                )
+            )
+        );
+    }
+
+    /// @dev Minimal signature check (Solady SignatureCheckerLib used as reference only). Order:
+    ///      1. If `signature` is 65 bytes (r, s, v) or 64 bytes (EIP-2098 r, vs): ecrecover(digest). Valid if the
+    ///         recovered address == oracle and != address(0), regardless of `oracle`'s code length. This keeps
+    ///         EIP-7702-delegated EOAs (code = 0xef0100 || delegate) working with plain ECDSA even when the
+    ///         delegate has no isValidSignature. Like solmate permit, high-s signatures are not rejected;
+    ///         malleation cannot replay because `settlementId` is consumed.
+    ///      2. Otherwise, if `oracle` has code: ERC-1271. Low-level staticcall of isValidSignature(digest, signature);
+    ///         valid iff the call succeeds, returns >= 32 bytes, and the first word is exactly 0x1626ba7e.
+    ///         Reverts, short/empty or garbage returndata yield false (InvalidSigner), never a bubbled revert.
+    ///         Only 32 bytes of returndata are copied. All remaining gas is forwarded (the oracle is owner-authorized).
+    ///      3. Otherwise invalid.
+    ///      No ERC-6492 (counterfactual wallet) support: a contract oracle must already be deployed.
+    function _isValidOracleSignature(address oracle, bytes32 digest, bytes calldata signature)
+        internal
+        view
+        returns (bool)
+    {
+        if (signature.length == 65 || signature.length == 64) {
+            bytes32 r;
+            bytes32 s;
+            uint8 v;
+            if (signature.length == 65) {
+                assembly ("memory-safe") {
+                    r := calldataload(signature.offset)
+                    s := calldataload(add(signature.offset, 0x20))
+                    v := byte(0, calldataload(add(signature.offset, 0x40)))
+                }
+            } else {
+                bytes32 vs;
+                assembly ("memory-safe") {
+                    r := calldataload(signature.offset)
+                    vs := calldataload(add(signature.offset, 0x20))
+                }
+                s = vs & bytes32(0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+                v = uint8(uint256(vs >> 255)) + 27;
+            }
+
+            address recoveredAddress = ecrecover(digest, v, r, s);
+            if (recoveredAddress != address(0) && recoveredAddress == oracle) return true;
+        }
+
+        if (oracle.code.length == 0) return false;
+
+        bytes memory data = abi.encodeCall(IERC1271.isValidSignature, (digest, signature));
+        bool success;
+        bytes32 result;
+        assembly ("memory-safe") {
+            success := staticcall(gas(), oracle, add(data, 0x20), mload(data), 0x00, 0x20)
+            if lt(returndatasize(), 0x20) { success := 0 }
+            result := mload(0x00)
+        }
+        return success && result == bytes32(IERC1271.isValidSignature.selector);
     }
 
     /// @dev Protocol fee taken from `totalAmount` before the referral split. Zero when `feeBps` is 0 or the amount rounds down.

@@ -262,7 +262,7 @@ solmate/=lib/solmate/src/
 ## Common Patterns
 
 ### Oracle Authorization Pattern
-Oracle authorization is scoped per `groupId`. An oracle authorized for one group cannot register referrals or distribute rewards in another.
+Oracle authorization is scoped per `groupId`. An oracle authorized for one group cannot register referrals or distribute rewards in another. `register` / `batchRegister` / `setSkiplisted` check `msg.sender`; `settle` checks an EIP-712 signature from an oracle for the group (65/64-byte ECDSA recovering to `oracle` first, valid even if `oracle` has code, e.g. EIP-7702 EOAs; otherwise ERC-1271 `isValidSignature` via low-level staticcall if `oracle` has code; no ERC-6492). Never authorize via `tx.origin`.
 
 ```solidity
 mapping(bytes32 => mapping(address => bool)) private _authorizedOracles;
@@ -311,10 +311,14 @@ function getAncestors(address user, bytes32 groupId, uint256 maxLevels)
 
 ### Reward Split Logic
 ```solidity
-// msg.sender or tx.origin is an authorized oracle. Tokens are pulled from msg.sender.
+// An authorized oracle for groupId signs (EIP-712, domain "ReferralGraph" v1):
+//   Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)
+// `payer` submits (payer == msg.sender; tokens are pulled from msg.sender). settlementId is the nonce.
 // Protocol fee defaults to 0; when set, it is deducted from totalAmount (approve exactly totalAmount).
+// ReferralSettlement.distributedAmount = totalAmount - fee; ProtocolFeeCharged.amount = fee (only if > 0).
 token.approve(address(referralGraph), totalAmount);
-referralGraph.settle(groupId, settlementId, user, address(token), totalAmount);
+// signature: abi.encodePacked(r, s, v) / 64-byte EIP-2098 from oracle's key (EOA or 7702 EOA), else an ERC-1271 blob.
+referralGraph.settle(groupId, settlementId, user, address(token), totalAmount, deadline, oracle, signature);
 ```
 
 Follow these guidelines to maintain consistency and quality across the codebase.

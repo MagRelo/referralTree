@@ -9,7 +9,7 @@
 - **ReferralGraph**: Attribution, skiplist, payout-chain resolution, and `settle`. Pulls the fee and forwards it in that call. Does not keep a balance.
 - **RewardCalculator**: Geometric split math (`0.6` decay, max 10, remainder to index 0). Does not hold funds.
 
-An authorized oracle calls `settle`, or starts the transaction that calls it. The graph pulls the fee from `msg.sender`, pays the chain, and emits `ReferralSettlement`. Incentive Exchange indexes that event (see [Indexing](#indexing-referralsettlement)).
+An authorized oracle signs an EIP-712 `Settle` message; the payer (any address, e.g. your app's payout contract) submits it to `settle`. The graph pulls the fee from `msg.sender`, pays the chain, and emits `ReferralSettlement`. Incentive Exchange indexes that event (see [Indexing](#indexing-referralsettlement)).
 
 ## How It Works
 
@@ -109,13 +109,40 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 
 ### 2. Settle
 
-`msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. `register` still requires `msg.sender` itself to be that oracle. Approve from the address that calls `settle`, then one call. The graph resolves the chain, splits, pulls the tokens from `msg.sender`, pays, and emits. If a transfer fails, the call reverts and there is no event.
+`settle` is authorized by an EIP-712 signature from an oracle authorized for `groupId` (there is no `tx.origin` or caller whitelist). Anyone may submit the signature, but the signed `payer` must be the address that calls `settle`, because that is who the tokens are pulled from. An oracle settling for itself signs with `payer = oracle` and submits. The submitter passes the signing `oracle` address and the `signature` bytes. `register` still requires `msg.sender` itself to be the oracle.
 
-The global protocol fee defaults to **0**. When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.totalAmount` is the referral distributable (`totalAmount - protocolFee`).
+The graph resolves the chain, splits, pulls the tokens from `msg.sender`, pays, and emits. If a transfer fails, the call reverts and there is no event.
+
+**Signed payload** (domain: `name = "ReferralGraph"`, `version = "1"`, `chainId`, `verifyingContract = graph`):
+
+```
+Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)
+```
+
+- `settlementId` is the nonce: each id settles at most once per group, whoever submits it.
+- `deadline` is inclusive (`block.timestamp <= deadline`).
+- The signer's oracle authorization is checked when `settle` executes, so `unauthorizeOracle` invalidates that oracle's outstanding signatures.
+- `DOMAIN_SEPARATOR()` is cached for the deploy chain id and recomputed if the chain id changes (fork), as in solmate `ERC20.permit`. High-s signatures are not rejected (also as in solmate); since `settlementId` is consumed on first use, a malleated signature cannot replay a settlement.
+
+**Verification order.** `oracle` must be authorized for `groupId` (checked first). Then:
+
+1. **ECDSA first:** if `signature` is 65 bytes (`r‖s‖v`) or 64 bytes (EIP-2098 compact `r‖vs`) and `ecrecover(digest) == oracle` (non-zero), it is valid — regardless of whether `oracle` has code. This covers plain EOAs and **EIP-7702-delegated EOAs** (code `0xef0100‖delegate`), even if the delegate has no `isValidSignature`.
+2. **ERC-1271 fallback:** otherwise, if `oracle` has code (a Safe, smart account, or 7702 EOA whose delegate implements 1271, e.g. with session keys), the graph `staticcall`s `oracle.isValidSignature(digest, signature)` and accepts only if the call succeeds and returns exactly the magic value `0x1626ba7e` (ABI-encoded, at least 32 bytes). A reverting or garbage-returning wallet makes `settle` revert with `InvalidSigner`.
+3. Otherwise invalid (`InvalidSigner`).
+
+- **Trust:** a contract oracle decides for itself what counts as a valid signature, so authorizing one delegates settle authority for the group to that contract's logic (and its upgrades/modules).
+- **Gas:** all remaining gas is forwarded to `isValidSignature`; the payer pays for it. Only 32 bytes of returndata are copied.
+- **7702:** a delegated EOA's own key always remains valid via step 1; the delegate cannot revoke it.
+- **Not supported:** ERC-6492 (signatures from not-yet-deployed wallets) — a contract oracle must be deployed.
+
+The global protocol fee defaults to **0** and is hard-capped at `MAX_FEE_BPS` (1000 bps = 10%). When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.distributedAmount` is the net referral amount (`totalAmount - protocolFee`); `distributedAmount + ProtocolFeeCharged.amount == totalAmount`.
 
 ```solidity
+// Off-chain: oracle signs Settle{groupId, settlementId, user, token, totalAmount, payer, deadline}
+//   EOA: signature = abi.encodePacked(r, s, v) (or 64-byte EIP-2098); contract oracle: whatever its isValidSignature expects
+// On-chain, from `payer`:
 token.approve(address(graph), totalAmount);
-graph.settle(groupId, settlementId, user, address(token), totalAmount);
+graph.settle(groupId, settlementId, user, address(token), totalAmount, deadline, oracle, signature);
 ```
 
 Skiplisted addresses are omitted from the payout chain (no pay, no level consumed). `settlementId` cannot be reused for that group. Approve the exact `totalAmount` for the call, not an unlimited allowance.
@@ -142,26 +169,28 @@ referralGraph.setSkiplisted(user2, groupId, false);
 /// @param settlementId Caller-chosen idempotency key (e.g. keccak256(abi.encode(contestId)))
 /// @param triggerUser Seed passed to getPayoutChain
 /// @param token ERC20 that was pulled and forwarded
-/// @param totalAmount Referral-network fee actually transferred (not winner-pool, not gross contest)
+/// @param distributedAmount Net referral amount actually transferred to recipients (settle totalAmount minus protocol fee; not winner-pool, not gross contest)
 /// @param recipients Skiplist-aware payout chain, at most 10
-/// @param amounts Geometric split of totalAmount, same order as recipients
+/// @param amounts Geometric split of distributedAmount, same order as recipients (sums to distributedAmount)
 event ReferralSettlement(
     bytes32 indexed groupId,
     bytes32 indexed settlementId,
     address indexed triggerUser,
     address token,
-    uint256 totalAmount,
+    uint256 distributedAmount,
     address[] recipients,
     uint256[] amounts
 );
 ```
 
-Indexers key on `topic0 = keccak256("ReferralSettlement(bytes32,bytes32,address,address,uint256,address[],uint256[])")` at the graph address.
+Indexers key on `topic0 = keccak256("ReferralSettlement(bytes32,bytes32,address,address,uint256,address[],uint256[])")` = `0xc1d7413a8f588edf973af385db8ba0409e45acbef501d8191166c42dd88ce3b3` at the graph address. (The fifth field was renamed from `totalAmount` to `distributedAmount`; parameter names are not part of topic0, so the selector and log encoding are unchanged — only ABI-JSON-based decoders see the new name.)
+
+**Amounts and the protocol fee.** `distributedAmount` is net of the protocol fee. When a fee is charged, the same transaction also emits `ProtocolFeeCharged(groupId, settlementId, token, recipient, amount)`, and `distributedAmount + ProtocolFeeCharged.amount == settle totalAmount` (gross). Referral paid-out = sum of `distributedAmount`; gross settle volume = paid-out + sum of `ProtocolFeeCharged.amount` (join on `groupId`/`settlementId`). Don't add the fee to `distributedAmount` and call it paid-out.
 
 A listing is reporting-complete when:
 
 - Payouts go through `settle` on that graph (the event is not optional)
-- `totalAmount` is the referral-network fee (not winner-pool, not gross contest)
+- `distributedAmount` is the referral-network amount paid to the chain (net of any protocol fee; not winner-pool, not gross contest)
 - Graph oracles / skiplist policy are documented
 - IE can read `registeredCount` and `skiplistedCount` on the graph, and derive settlement count, `totalPaid(token)`, paid participants, and recency from this event
 
@@ -225,8 +254,9 @@ referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
 - `registeredCount(bytes32 groupId)` - Successful registrations in the group (excludes `REFERRAL_ROOT`; never decrements)
 - `skiplistedCount(bytes32 groupId)` - Current skiplist length (no extra storage)
 - `setRewardCalculator(address calculator)` - Set the geometric splitter used by `settle` (owner only)
-- `settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)` - Pull the referral fee from `msg.sender`, pay the payout chain, emit `ReferralSettlement`
-- `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, deducted from the settle total before the referral split (owner only; defaults to 0)
+- `settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount, uint256 deadline, address oracle, bytes signature)` - Verify `oracle`'s EIP-712 `Settle` signature (ECDSA against `oracle` first, then ERC-1271 if `oracle` has code; `payer = msg.sender`), pull the referral fee from `msg.sender`, pay the payout chain, emit `ReferralSettlement`
+- `DOMAIN_SEPARATOR()` / `SETTLE_TYPEHASH()` - EIP-712 domain separator and `Settle` typehash for off-chain signers
+- `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, deducted from the settle total before the referral split (owner only; defaults to 0; capped at `MAX_FEE_BPS` = 1000, i.e. 10%)
 - `feeBps()` / `feeRecipient()` - Current protocol fee config
 
 `UserRegistered` is `event UserRegistered(bytes32 indexed groupId, address indexed user, address indexed referrer)` (**breaking ABI** vs v1; any subgraph / listener must be updated).

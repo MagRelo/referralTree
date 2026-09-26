@@ -197,5 +197,13 @@ contract MockReferralGraph is IReferralGraph {
 
     function setProtocolFee(uint16, address) external {}
 
-    function settle(bytes32, bytes32, address, address, uint256) external {}
+    function DOMAIN_SEPARATOR() external pure returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function SETTLE_TYPEHASH() external pure returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function settle(bytes32, bytes32, address, address, uint256, uint256, address, bytes calldata) external {}
 }
