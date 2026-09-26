@@ -269,7 +269,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     }
 
     /// @dev Settlement only. `msg.sender` or `tx.origin` must be an oracle for the group.
-    ///      The fee is pulled from `msg.sender`, never from `tx.origin`.
+    ///      Tokens (including any protocol fee share of `totalAmount`) are pulled from `msg.sender`, never from `tx.origin`.
     modifier onlySettlementOracle(bytes32 groupId) {
         if (!_authorizedOracles[groupId][msg.sender] && !_authorizedOracles[groupId][tx.origin]) {
             revert UnauthorizedOracle();
@@ -362,37 +362,39 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         if (_referrers[groupId][user] == address(0)) revert UserNotRegistered();
         if (_settled[groupId][settlementId]) revert SettlementAlreadyUsed();
 
+        // Deduct protocol fee from the settle total up front. Caller pays `totalAmount` only.
+        uint256 protocolFee = _protocolFee(totalAmount);
+        uint256 distributable = totalAmount - protocolFee;
+
         address[] memory chain = this.getPayoutChain(user, groupId, MAX_PAYOUT_LEVELS);
         if (chain.length == 0) revert EmptyPayoutChain();
 
-        uint256[] memory amounts = rewardCalculator.calculateRewards(totalAmount, chain.length);
+        uint256[] memory amounts = rewardCalculator.calculateRewards(distributable, chain.length);
         if (amounts.length != chain.length) revert InvalidSplit();
 
         uint256 sum;
         for (uint256 i = 0; i < amounts.length; i++) {
             sum += amounts[i];
         }
-        if (sum != totalAmount) revert InvalidSplit();
+        if (sum != distributable) revert InvalidSplit();
 
         _settled[groupId][settlementId] = true;
 
         ERC20 payoutToken = ERC20(token);
-        for (uint256 i = 0; i < chain.length; i++) {
-            if (amounts[i] == 0) continue;
-            payoutToken.safeTransferFrom(msg.sender, chain[i], amounts[i]);
-        }
-
-        uint256 protocolFee = _protocolFee(totalAmount);
         if (protocolFee > 0) {
             address recipient = feeRecipient;
             payoutToken.safeTransferFrom(msg.sender, recipient, protocolFee);
             emit ProtocolFeeCharged(groupId, settlementId, token, recipient, protocolFee);
         }
+        for (uint256 i = 0; i < chain.length; i++) {
+            if (amounts[i] == 0) continue;
+            payoutToken.safeTransferFrom(msg.sender, chain[i], amounts[i]);
+        }
 
-        emit ReferralSettlement(groupId, settlementId, user, token, totalAmount, chain, amounts);
+        emit ReferralSettlement(groupId, settlementId, user, token, distributable, chain, amounts);
     }
 
-    /// @dev Protocol fee charged to the settle caller, on top of `totalAmount`. Zero when `feeBps` is 0 or the amount rounds down.
+    /// @dev Protocol fee taken from `totalAmount` before the referral split. Zero when `feeBps` is 0 or the amount rounds down.
     function _protocolFee(uint256 totalAmount) internal view returns (uint256) {
         uint16 bps = feeBps;
         if (bps == 0) return 0;

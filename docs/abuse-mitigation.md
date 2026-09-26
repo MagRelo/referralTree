@@ -21,7 +21,7 @@ Referral edges are append-only. Once a user is registered in a group, their refe
 
 1. App approves the graph for the exact referral fee.
 2. App calls `settle(groupId, settlementId, user, token, totalAmount)`.
-3. The graph resolves the payout chain, splits, pulls the tokens from the caller, pays recipients, and emits `ReferralSettlement`. The same `settlementId` cannot be reused for that group. A global protocol fee (default 0) is charged on top of `totalAmount` when the owner has set `feeBps`.
+3. The graph resolves the payout chain, deducts any protocol fee from `totalAmount`, splits the remainder, pulls the tokens from the caller, pays recipients, and emits `ReferralSettlement`. The same `settlementId` cannot be reused for that group. A global protocol fee (default 0) is taken from the settle total when the owner has set `feeBps`.
 
 ## Payout Incentives
 
