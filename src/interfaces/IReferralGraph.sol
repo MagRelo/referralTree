@@ -43,11 +43,7 @@ interface IReferralGraph {
     /// @notice Emitted when settle takes the protocol fee from the settle total
     /// @dev Separate from ReferralSettlement. That event's totalAmount is the referral distributable (gross settle amount minus fee).
     event ProtocolFeeCharged(
-        bytes32 indexed groupId,
-        bytes32 indexed settlementId,
-        address indexed token,
-        address recipient,
-        uint256 amount
+        bytes32 indexed groupId, bytes32 indexed settlementId, address indexed token, address recipient, uint256 amount
     );
 
     /// @notice Error when user address is invalid (zero address)
@@ -100,6 +96,12 @@ interface IReferralGraph {
 
     /// @notice Error when a non-zero protocol fee has no recipient
     error InvalidFeeRecipient();
+
+    /// @notice Error when a settle signature is past its deadline
+    error SignatureExpired();
+
+    /// @notice Error when a settle signature does not recover to an oracle authorized for the group
+    error InvalidSigner();
 
     /// @notice Get the referrer of a user in a group
     /// @param user The user to query
@@ -224,13 +226,36 @@ interface IReferralGraph {
     /// @param recipient Address that receives the protocol fee
     function setProtocolFee(uint16 bps, address recipient) external;
 
+    /// @notice EIP-712 domain separator for oracle-signed settlements (name "ReferralGraph", version "1")
+    function DOMAIN_SEPARATOR() external view returns (bytes32);
+
+    /// @notice EIP-712 typehash:
+    ///         Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)
+    function SETTLE_TYPEHASH() external view returns (bytes32);
+
     /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from that amount, pay the remainder to the payout chain, and emit ReferralSettlement
-    /// @dev `msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. The full `totalAmount` (fee + referral split) is pulled from `msg.sender` in this transaction. Does not retain a token balance.
+    /// @dev Authorization is an EIP-712 `Settle` signature from an oracle authorized for `groupId` (checked at execution time,
+    ///      so unauthorizing an oracle invalidates its outstanding signatures). Anyone may submit, but the signed `payer`
+    ///      must equal `msg.sender`, and the full `totalAmount` is pulled from `msg.sender`. `settlementId` is the nonce:
+    ///      each id settles at most once per group. Does not retain a token balance.
     /// @param groupId The referral group
-    /// @param settlementId Caller-chosen idempotency key
+    /// @param settlementId Oracle-chosen idempotency key / signature nonce
     /// @param user Registered seed passed to getPayoutChain
     /// @param token ERC20 to pull and forward
     /// @param totalAmount Gross settle amount. Protocol fee (if any) is deducted first; the remainder is split across the referral chain. Caller approves exactly `totalAmount`.
-    function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
-        external;
+    /// @param deadline Last timestamp (inclusive) at which the signature is valid
+    /// @param v Signature v
+    /// @param r Signature r
+    /// @param s Signature s
+    function settle(
+        bytes32 groupId,
+        bytes32 settlementId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external;
 }

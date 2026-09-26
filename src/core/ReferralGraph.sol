@@ -52,8 +52,22 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     /// @notice Recipient of the protocol fee charged on settle
     address public feeRecipient;
 
-    /// @notice groupId => settlementId => already settled
+    /// @notice groupId => settlementId => already settled. Doubles as the EIP-712 settle nonce.
     mapping(bytes32 => mapping(bytes32 => bool)) private _settled;
+
+    /*//////////////////////////////////////////////////////////////
+                            EIP-712 STORAGE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice EIP-712 typehash for an oracle-signed settlement
+    /// @dev `payer` is the address that submits `settle` and whose tokens are pulled (`msg.sender`).
+    bytes32 public constant SETTLE_TYPEHASH = keccak256(
+        "Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)"
+    );
+
+    uint256 internal immutable INITIAL_CHAIN_ID;
+
+    bytes32 internal immutable INITIAL_DOMAIN_SEPARATOR;
 
     /**
      * @notice Constructor
@@ -62,6 +76,9 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
      * @param initialGroupId Group to authorize the initial oracle for
      */
     constructor(address initialOwner, address initialOracle, bytes32 initialGroupId) Owned(initialOwner) {
+        INITIAL_CHAIN_ID = block.chainid;
+        INITIAL_DOMAIN_SEPARATOR = computeDomainSeparator();
+
         if (initialOracle != address(0)) {
             _authorizedOracles[initialGroupId][initialOracle] = true;
             _authorizedOraclesList[initialGroupId].push(initialOracle);
@@ -268,15 +285,6 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         _;
     }
 
-    /// @dev Settlement only. `msg.sender` or `tx.origin` must be an oracle for the group.
-    ///      Tokens (including any protocol fee share of `totalAmount`) are pulled from `msg.sender`, never from `tx.origin`.
-    modifier onlySettlementOracle(bytes32 groupId) {
-        if (!_authorizedOracles[groupId][msg.sender] && !_authorizedOracles[groupId][tx.origin]) {
-            revert UnauthorizedOracle();
-        }
-        _;
-    }
-
     /// @inheritdoc IReferralGraph
     function register(address user, address referrer, bytes32 groupId) external onlyAuthorizedOracle(groupId) {
         _register(user, referrer, groupId);
@@ -350,11 +358,25 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     }
 
     /// @inheritdoc IReferralGraph
-    function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
-        external
-        onlySettlementOracle(groupId)
-        nonReentrant
-    {
+    function settle(
+        bytes32 groupId,
+        bytes32 settlementId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external nonReentrant {
+        if (block.timestamp > deadline) revert SignatureExpired();
+
+        address recoveredAddress =
+            _recoverSettleSigner(groupId, settlementId, user, token, totalAmount, deadline, v, r, s);
+        if (recoveredAddress == address(0) || !_authorizedOracles[groupId][recoveredAddress]) {
+            revert InvalidSigner();
+        }
+
         if (address(rewardCalculator) == address(0)) revert RewardCalculatorNotSet();
         if (token == address(0)) revert InvalidToken();
         if (totalAmount == 0) revert InvalidAmount();
@@ -392,6 +414,59 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         }
 
         emit ReferralSettlement(groupId, settlementId, user, token, distributable, chain, amounts);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             EIP-712 LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice EIP-712 domain separator (name "ReferralGraph", version "1"). Recomputed if the chain id changes (fork).
+    function DOMAIN_SEPARATOR() public view virtual returns (bytes32) {
+        return block.chainid == INITIAL_CHAIN_ID ? INITIAL_DOMAIN_SEPARATOR : computeDomainSeparator();
+    }
+
+    function computeDomainSeparator() internal view virtual returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes("ReferralGraph")),
+                keccak256("1"),
+                block.chainid,
+                address(this)
+            )
+        );
+    }
+
+    /// @dev Recovers the signer of a Settle struct with `payer = msg.sender`. Returns address(0) for an invalid
+    ///      signature. Like solmate permit, high-s signatures are not rejected; malleability cannot replay because
+    ///      `settlementId` is consumed on first use.
+    function _recoverSettleSigner(
+        bytes32 groupId,
+        bytes32 settlementId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) internal view returns (address) {
+        return ecrecover(
+            keccak256(
+                abi.encodePacked(
+                    "\x19\x01",
+                    DOMAIN_SEPARATOR(),
+                    keccak256(
+                        abi.encode(
+                            SETTLE_TYPEHASH, groupId, settlementId, user, token, totalAmount, msg.sender, deadline
+                        )
+                    )
+                )
+            ),
+            v,
+            r,
+            s
+        );
     }
 
     /// @dev Protocol fee taken from `totalAmount` before the referral split. Zero when `feeBps` is 0 or the amount rounds down.

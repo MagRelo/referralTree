@@ -17,11 +17,12 @@ Registration is oracle-gated. Only an authorized oracle can call `register` or `
 
 Referral edges are append-only. Once a user is registered in a group, their referrer cannot be changed by the current contract.
 
-**Payouts go through `ReferralGraph.settle`.** `msg.sender` or `tx.origin` must be an oracle authorized for the group. The fee is pulled from `msg.sender`. Typical flow:
+**Payouts go through `ReferralGraph.settle`.** Each settlement needs an EIP-712 signature from an oracle authorized for the group, bound to the payer (`msg.sender`), amount, token, trigger user, `settlementId`, and a deadline. There is no `tx.origin` authorization, so a contract the oracle key happens to call cannot settle on its behalf. The fee is pulled from `msg.sender`. Typical flow:
 
-1. App approves the graph for the exact referral fee.
-2. App calls `settle(groupId, settlementId, user, token, totalAmount)`.
-3. The graph resolves the payout chain, deducts any protocol fee from `totalAmount`, splits the remainder, pulls the tokens from the caller, pays recipients, and emits `ReferralSettlement`. The same `settlementId` cannot be reused for that group. A global protocol fee (default 0) is taken from the settle total when the owner has set `feeBps`.
+1. Oracle signs `Settle{groupId, settlementId, user, token, totalAmount, payer, deadline}`.
+2. Payer (app) approves the graph for the exact referral fee.
+3. Payer calls `settle(groupId, settlementId, user, token, totalAmount, deadline, v, r, s)`.
+4. The graph resolves the payout chain, deducts any protocol fee from `totalAmount`, splits the remainder, pulls the tokens from the caller, pays recipients, and emits `ReferralSettlement`. The same `settlementId` cannot be reused for that group. A global protocol fee (default 0) is taken from the settle total when the owner has set `feeBps`.
 
 ## Payout Incentives
 
