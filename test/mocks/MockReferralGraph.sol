@@ -205,5 +205,5 @@ contract MockReferralGraph is IReferralGraph {
         return bytes32(0);
     }
 
-    function settle(bytes32, bytes32, address, address, uint256, uint256, uint8, bytes32, bytes32) external {}
+    function settle(bytes32, bytes32, address, address, uint256, uint256, address, bytes calldata) external {}
 }

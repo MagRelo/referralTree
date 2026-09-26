@@ -6,6 +6,7 @@ import {ReferralGraph} from "../src/core/ReferralGraph.sol";
 import {IReferralGraph} from "../src/interfaces/IReferralGraph.sol";
 import {RewardCalculator} from "../src/core/RewardCalculator.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockERC1271Wallet} from "./mocks/MockERC1271Wallet.sol";
 
 /// Worthless token whose transferFrom is a no-op returning true (used by the tx.origin regression test).
 contract NoopToken {
@@ -31,15 +32,7 @@ contract OriginAttacker {
     receive() external payable {
         // No oracle signature available; any garbage signature must be rejected.
         graph.settle(
-            groupId,
-            settlementId,
-            user,
-            address(new NoopToken()),
-            1e30,
-            type(uint256).max,
-            27,
-            bytes32(uint256(1)),
-            bytes32(uint256(1))
+            groupId, settlementId, user, address(new NoopToken()), 1e30, type(uint256).max, tx.origin, new bytes(65)
         );
     }
 }
@@ -723,6 +716,11 @@ contract ReferralGraphTest is Test {
         (sig.v, sig.r, sig.s) = vm.sign(pk, digest);
     }
 
+    function _packed(Sig memory sig) internal pure returns (bytes memory) {
+        return abi.encodePacked(sig.r, sig.s, sig.v);
+    }
+
+    /// @dev Submit an ECDSA signature claiming the default EOA `oracle` as signer.
     function _submit(
         address payer,
         bytes32 groupId,
@@ -733,8 +731,22 @@ contract ReferralGraphTest is Test {
         uint256 deadline,
         Sig memory sig
     ) internal {
+        _submitAs(payer, groupId, settlementId, user, token, amount, deadline, oracle, _packed(sig));
+    }
+
+    function _submitAs(
+        address payer,
+        bytes32 groupId,
+        bytes32 settlementId,
+        address user,
+        address token,
+        uint256 amount,
+        uint256 deadline,
+        address signer,
+        bytes memory signature
+    ) internal {
         vm.prank(payer);
-        referralGraph.settle(groupId, settlementId, user, token, amount, deadline, sig.v, sig.r, sig.s);
+        referralGraph.settle(groupId, settlementId, user, token, amount, deadline, signer, signature);
     }
 
     /// @dev Oracle signs for `payer`, `payer` submits.
@@ -801,6 +813,10 @@ contract ReferralGraphTest is Test {
 
         uint256 deadline = block.timestamp + 1 hours;
         Sig memory sig = _sign(0xBAD, testGroup, bytes32("id"), user1, address(token), 1, user2, deadline);
+        // Claiming its own (unauthorized) address
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(user2, testGroup, bytes32("id"), user1, address(token), 1, deadline, vm.addr(0xBAD), _packed(sig));
+        // Claiming the authorized oracle's address
         vm.expectRevert(IReferralGraph.InvalidSigner.selector);
         _submit(user2, testGroup, bytes32("id"), user1, address(token), 1, deadline, sig);
     }
@@ -1155,7 +1171,7 @@ contract ReferralGraphTest is Test {
         uint256 deadline = block.timestamp + 1 hours;
         Sig memory sig = _sign(otherPk, testGroup, bytes32("x"), user3, address(token), SIG_TOTAL, payer, deadline);
         vm.expectRevert(IReferralGraph.InvalidSigner.selector);
-        _submit(payer, testGroup, bytes32("x"), user3, address(token), SIG_TOTAL, deadline, sig);
+        _submitAs(payer, testGroup, bytes32("x"), user3, address(token), SIG_TOTAL, deadline, otherOracle, _packed(sig));
     }
 
     function testSettleRevertsAfterSignerUnauthorized() public {
@@ -1301,20 +1317,190 @@ contract ReferralGraphTest is Test {
         NoopToken junk = new NoopToken();
         vm.expectRevert(IReferralGraph.InvalidSigner.selector);
         vm.prank(address(attacker), oracle);
-        referralGraph.settle(
-            testGroup,
-            contestId,
-            user3,
-            address(junk),
-            1e30,
-            type(uint256).max,
-            27,
-            bytes32(uint256(1)),
-            bytes32(uint256(1))
-        );
+        referralGraph.settle(testGroup, contestId, user3, address(junk), 1e30, type(uint256).max, oracle, new bytes(65));
 
         // The canonical settlementId is still available for the real payout.
         _settleSigned(oracle, testGroup, contestId, user3, address(token), SIG_TOTAL);
         assertEq(token.balanceOf(oracle), 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    ERC-1271 / SIGNATURE FORMAT TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    uint256 internal constant WALLET_OWNER_PK = 0x5AFE;
+
+    /// @dev ERC-1271 wallet (owned by WALLET_OWNER_PK) authorized as an oracle for testGroup.
+    function _walletOracle() internal returns (MockERC1271Wallet wallet) {
+        wallet = new MockERC1271Wallet(vm.addr(WALLET_OWNER_PK));
+        vm.prank(owner);
+        referralGraph.authorizeOracle(address(wallet), testGroup);
+    }
+
+    function testContractOracleValidSignatureSettles() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        MockERC1271Wallet wallet = _walletOracle();
+        uint256 deadline = block.timestamp + 1 hours;
+        Sig memory sig =
+            _sign(WALLET_OWNER_PK, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, payer, deadline);
+
+        _submitAs(
+            payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), _packed(sig)
+        );
+        assertEq(token.balanceOf(payer), 0);
+        assertEq(token.balanceOf(user1) + token.balanceOf(user2) + token.balanceOf(user3), SIG_TOTAL);
+    }
+
+    function testContractOracleMisbehaviourRevertsInvalidSigner() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        MockERC1271Wallet wallet = _walletOracle();
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig =
+            _packed(_sign(WALLET_OWNER_PK, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, payer, deadline));
+
+        MockERC1271Wallet.Mode[5] memory modes = [
+            MockERC1271Wallet.Mode.WrongMagic,
+            MockERC1271Wallet.Mode.DirtyMagic,
+            MockERC1271Wallet.Mode.Revert,
+            MockERC1271Wallet.Mode.Empty,
+            MockERC1271Wallet.Mode.Short
+        ];
+        for (uint256 i = 0; i < modes.length; i++) {
+            wallet.setMode(modes[i]);
+            vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+            _submitAs(payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), sig);
+        }
+
+        // Same signature still works once the wallet behaves
+        wallet.setMode(MockERC1271Wallet.Mode.Valid);
+        _submitAs(payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), sig);
+        assertEq(token.balanceOf(payer), 0);
+    }
+
+    function testContractOracleGasBurnRevertsInvalidSigner() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        MockERC1271Wallet wallet = _walletOracle();
+        wallet.setMode(MockERC1271Wallet.Mode.GasBurn);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig =
+            _packed(_sign(WALLET_OWNER_PK, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, payer, deadline));
+
+        // The 1/64 gas retained after the burned staticcall is enough to revert cleanly.
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        vm.prank(payer);
+        referralGraph.settle{gas: 5_000_000}(
+            testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), sig
+        );
+    }
+
+    function testContractNotAuthorizedAsOracleReverts() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        MockERC1271Wallet wallet = new MockERC1271Wallet(vm.addr(WALLET_OWNER_PK)); // valid wallet, not authorized
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig =
+            _packed(_sign(WALLET_OWNER_PK, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, payer, deadline));
+
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), sig);
+
+        // Authorizing the wallet does not authorize its owner key as an EOA oracle either
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(
+            payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, vm.addr(WALLET_OWNER_PK), sig
+        );
+    }
+
+    function testContractOracleRejectsSignatureForDifferentPayload() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        MockERC1271Wallet wallet = _walletOracle();
+        uint256 deadline = block.timestamp + 1 hours;
+        // Wallet owner approved a settle of SIG_TOTAL / 2 for user2 ...
+        bytes memory sig = _packed(
+            _sign(WALLET_OWNER_PK, testGroup, bytes32("w"), user2, address(token), SIG_TOTAL / 2, payer, deadline)
+        );
+
+        // ... which cannot be used for a different payload (the graph asks the wallet about a different digest)
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), sig);
+        // ... nor by a different payer
+        address other = address(0xF00);
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(other, testGroup, bytes32("w"), user2, address(token), SIG_TOTAL / 2, deadline, address(wallet), sig);
+    }
+
+    function testContractOracleReplayBlocked() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        token.mint(payer, SIG_TOTAL);
+        vm.prank(payer);
+        token.approve(address(referralGraph), SIG_TOTAL * 2);
+        MockERC1271Wallet wallet = _walletOracle();
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig =
+            _packed(_sign(WALLET_OWNER_PK, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, payer, deadline));
+
+        _submitAs(payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), sig);
+        vm.expectRevert(IReferralGraph.SettlementAlreadyUsed.selector);
+        _submitAs(payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), sig);
+    }
+
+    function testEoaOracleRejectsWrongLengthSignature() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig =
+            _packed(_sign(ORACLE_PK, testGroup, bytes32("l"), user3, address(token), SIG_TOTAL, payer, deadline));
+
+        bytes memory tooLong = abi.encodePacked(sig, uint8(0));
+        bytes memory tooShort = new bytes(63);
+        for (uint256 i = 0; i < 63; i++) {
+            tooShort[i] = sig[i];
+        }
+
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(payer, testGroup, bytes32("l"), user3, address(token), SIG_TOTAL, deadline, oracle, tooLong);
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(payer, testGroup, bytes32("l"), user3, address(token), SIG_TOTAL, deadline, oracle, tooShort);
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(payer, testGroup, bytes32("l"), user3, address(token), SIG_TOTAL, deadline, oracle, "");
+    }
+
+    function testEoaSignatureClaimingDifferentOracleReverts() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        (address oracle2, uint256 oracle2Pk) = makeAddrAndKey("oracle2");
+        vm.prank(owner);
+        referralGraph.authorizeOracle(oracle2, testGroup);
+        uint256 deadline = block.timestamp + 1 hours;
+        // oracle2 signs but the submission claims the other authorized oracle
+        bytes memory sig =
+            _packed(_sign(oracle2Pk, testGroup, bytes32("c"), user3, address(token), SIG_TOTAL, payer, deadline));
+
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(payer, testGroup, bytes32("c"), user3, address(token), SIG_TOTAL, deadline, oracle, sig);
+
+        _submitAs(payer, testGroup, bytes32("c"), user3, address(token), SIG_TOTAL, deadline, oracle2, sig);
+        assertEq(token.balanceOf(payer), 0);
+    }
+
+    function testEoaOracleAcceptsEip2098CompactSignature() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes32 structHash = keccak256(
+            abi.encode(SETTLE_TYPEHASH, testGroup, bytes32("k"), user3, address(token), SIG_TOTAL, payer, deadline)
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
+        (bytes32 r, bytes32 vs) = vm.signCompact(ORACLE_PK, digest);
+
+        _submitAs(
+            payer, testGroup, bytes32("k"), user3, address(token), SIG_TOTAL, deadline, oracle, abi.encodePacked(r, vs)
+        );
+        assertEq(token.balanceOf(payer), 0);
     }
 }

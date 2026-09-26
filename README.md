@@ -109,7 +109,7 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 
 ### 2. Settle
 
-`settle` is authorized by an EIP-712 signature from an oracle authorized for `groupId` (there is no `tx.origin` or caller whitelist). Anyone may submit the signature, but the signed `payer` must be the address that calls `settle`, because that is who the tokens are pulled from. An oracle settling for itself signs with `payer = oracle` and submits. `register` still requires `msg.sender` itself to be the oracle.
+`settle` is authorized by an EIP-712 signature from an oracle authorized for `groupId` (there is no `tx.origin` or caller whitelist). Anyone may submit the signature, but the signed `payer` must be the address that calls `settle`, because that is who the tokens are pulled from. An oracle settling for itself signs with `payer = oracle` and submits. The submitter passes the signing `oracle` address and the `signature` bytes. `register` still requires `msg.sender` itself to be the oracle.
 
 The graph resolves the chain, splits, pulls the tokens from `msg.sender`, pays, and emits. If a transfer fails, the call reverts and there is no event.
 
@@ -124,13 +124,22 @@ Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 t
 - The signer's oracle authorization is checked when `settle` executes, so `unauthorizeOracle` invalidates that oracle's outstanding signatures.
 - `DOMAIN_SEPARATOR()` is cached for the deploy chain id and recomputed if the chain id changes (fork), as in solmate `ERC20.permit`. High-s signatures are not rejected (also as in solmate); since `settlementId` is consumed on first use, a malleated signature cannot replay a settlement.
 
+**Oracle types.** `oracle` must be authorized for `groupId` (checked first).
+
+- **EOA oracle** (no code): ECDSA over the EIP-712 digest, 65-byte `r‖s‖v` or 64-byte EIP-2098 compact `r‖vs`. Valid iff `ecrecover(digest) == oracle`.
+- **Contract oracle** (e.g. a Safe or smart account): ERC-1271. The graph `staticcall`s `oracle.isValidSignature(digest, signature)` and accepts only if the call succeeds and returns exactly the magic value `0x1626ba7e` (ABI-encoded, at least 32 bytes). A reverting or garbage-returning wallet makes `settle` revert with `InvalidSigner`.
+- **Trust:** a contract oracle decides for itself what counts as a valid signature, so authorizing one delegates settle authority for the group to that contract's logic (and its upgrades/modules).
+- **Gas:** all remaining gas is forwarded to `isValidSignature`; the payer pays for it. Only 32 bytes of returndata are copied.
+- **Not supported:** ERC-6492 (signatures from not-yet-deployed wallets) — the oracle contract must be deployed. EOAs with EIP-7702 delegation have code, so they are verified via ERC-1271 and their delegate must implement `isValidSignature`.
+
 The global protocol fee defaults to **0** and is hard-capped at `MAX_FEE_BPS` (1000 bps = 10%). When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.totalAmount` is the referral distributable (`totalAmount - protocolFee`).
 
 ```solidity
-// Off-chain: oracle signs Settle{groupId, settlementId, user, token, totalAmount, payer, deadline} -> (v, r, s)
+// Off-chain: oracle signs Settle{groupId, settlementId, user, token, totalAmount, payer, deadline}
+//   EOA: signature = abi.encodePacked(r, s, v) (or 64-byte EIP-2098); contract oracle: whatever its isValidSignature expects
 // On-chain, from `payer`:
 token.approve(address(graph), totalAmount);
-graph.settle(groupId, settlementId, user, address(token), totalAmount, deadline, v, r, s);
+graph.settle(groupId, settlementId, user, address(token), totalAmount, deadline, oracle, signature);
 ```
 
 Skiplisted addresses are omitted from the payout chain (no pay, no level consumed). `settlementId` cannot be reused for that group. Approve the exact `totalAmount` for the call, not an unlimited allowance.
@@ -240,7 +249,7 @@ referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
 - `registeredCount(bytes32 groupId)` - Successful registrations in the group (excludes `REFERRAL_ROOT`; never decrements)
 - `skiplistedCount(bytes32 groupId)` - Current skiplist length (no extra storage)
 - `setRewardCalculator(address calculator)` - Set the geometric splitter used by `settle` (owner only)
-- `settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount, uint256 deadline, uint8 v, bytes32 r, bytes32 s)` - Verify the oracle's EIP-712 `Settle` signature (`payer = msg.sender`), pull the referral fee from `msg.sender`, pay the payout chain, emit `ReferralSettlement`
+- `settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount, uint256 deadline, address oracle, bytes signature)` - Verify `oracle`'s EIP-712 `Settle` signature (ECDSA for EOAs, ERC-1271 for contracts; `payer = msg.sender`), pull the referral fee from `msg.sender`, pay the payout chain, emit `ReferralSettlement`
 - `DOMAIN_SEPARATOR()` / `SETTLE_TYPEHASH()` - EIP-712 domain separator and `Settle` typehash for off-chain signers
 - `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, deducted from the settle total before the referral split (owner only; defaults to 0; capped at `MAX_FEE_BPS` = 1000, i.e. 10%)
 - `feeBps()` / `feeRecipient()` - Current protocol fee config

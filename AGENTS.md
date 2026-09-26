@@ -262,7 +262,7 @@ solmate/=lib/solmate/src/
 ## Common Patterns
 
 ### Oracle Authorization Pattern
-Oracle authorization is scoped per `groupId`. An oracle authorized for one group cannot register referrals or distribute rewards in another. `register` / `batchRegister` / `setSkiplisted` check `msg.sender`; `settle` checks an EIP-712 signature from an oracle for the group. Never authorize via `tx.origin`.
+Oracle authorization is scoped per `groupId`. An oracle authorized for one group cannot register referrals or distribute rewards in another. `register` / `batchRegister` / `setSkiplisted` check `msg.sender`; `settle` checks an EIP-712 signature from an oracle for the group (ECDSA for EOA oracles, ERC-1271 `isValidSignature` via low-level staticcall for contract oracles; no ERC-6492). Never authorize via `tx.origin`.
 
 ```solidity
 mapping(bytes32 => mapping(address => bool)) private _authorizedOracles;
@@ -316,7 +316,8 @@ function getAncestors(address user, bytes32 groupId, uint256 maxLevels)
 // `payer` submits (payer == msg.sender; tokens are pulled from msg.sender). settlementId is the nonce.
 // Protocol fee defaults to 0; when set, it is deducted from totalAmount (approve exactly totalAmount).
 token.approve(address(referralGraph), totalAmount);
-referralGraph.settle(groupId, settlementId, user, address(token), totalAmount, deadline, v, r, s);
+// signature: abi.encodePacked(r, s, v) / 64-byte EIP-2098 for EOA oracles, ERC-1271 blob for contract oracles.
+referralGraph.settle(groupId, settlementId, user, address(token), totalAmount, deadline, oracle, signature);
 ```
 
 Follow these guidelines to maintain consistency and quality across the codebase.

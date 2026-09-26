@@ -21,7 +21,7 @@ Referral edges are append-only. Once a user is registered in a group, their refe
 
 1. Oracle signs `Settle{groupId, settlementId, user, token, totalAmount, payer, deadline}`.
 2. Payer (app) approves the graph for the exact referral fee.
-3. Payer calls `settle(groupId, settlementId, user, token, totalAmount, deadline, v, r, s)`.
+3. Payer calls `settle(groupId, settlementId, user, token, totalAmount, deadline, oracle, signature)`. EOA oracles are checked with `ecrecover`; contract oracles (e.g. a Safe) with ERC-1271. Authorizing a contract oracle delegates settle authority to that contract's signature logic.
 4. The graph resolves the payout chain, deducts any protocol fee from `totalAmount`, splits the remainder, pulls the tokens from the caller, pays recipients, and emits `ReferralSettlement`. The same `settlementId` cannot be reused for that group. A global protocol fee (default 0) is taken from the settle total when the owner has set `feeBps`.
 
 ## Payout Incentives

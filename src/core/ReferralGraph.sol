@@ -7,6 +7,7 @@ import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {IReferralGraph} from "../interfaces/IReferralGraph.sol";
 import {IRewardCalculator} from "../interfaces/IRewardCalculator.sol";
+import {IERC1271} from "../interfaces/IERC1271.sol";
 
 /**
  * @title ReferralGraph
@@ -367,17 +368,14 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         address token,
         uint256 totalAmount,
         uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        address oracle,
+        bytes calldata signature
     ) external nonReentrant {
         if (block.timestamp > deadline) revert SignatureExpired();
+        if (!_authorizedOracles[groupId][oracle]) revert InvalidSigner();
 
-        address recoveredAddress =
-            _recoverSettleSigner(groupId, settlementId, user, token, totalAmount, deadline, v, r, s);
-        if (recoveredAddress == address(0) || !_authorizedOracles[groupId][recoveredAddress]) {
-            revert InvalidSigner();
-        }
+        bytes32 digest = _settleDigest(groupId, settlementId, user, token, totalAmount, deadline);
+        if (!_isValidOracleSignature(oracle, digest, signature)) revert InvalidSigner();
 
         if (address(rewardCalculator) == address(0)) revert RewardCalculatorNotSet();
         if (token == address(0)) revert InvalidToken();
@@ -439,36 +437,75 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         );
     }
 
-    /// @dev Recovers the signer of a Settle struct with `payer = msg.sender`. Returns address(0) for an invalid
-    ///      signature. Like solmate permit, high-s signatures are not rejected; malleability cannot replay because
-    ///      `settlementId` is consumed on first use.
-    function _recoverSettleSigner(
+    /// @dev EIP-712 digest of a Settle struct with `payer = msg.sender`.
+    function _settleDigest(
         bytes32 groupId,
         bytes32 settlementId,
         address user,
         address token,
         uint256 totalAmount,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) internal view returns (address) {
-        return ecrecover(
-            keccak256(
-                abi.encodePacked(
-                    "\x19\x01",
-                    DOMAIN_SEPARATOR(),
-                    keccak256(
-                        abi.encode(
-                            SETTLE_TYPEHASH, groupId, settlementId, user, token, totalAmount, msg.sender, deadline
-                        )
-                    )
+        uint256 deadline
+    ) internal view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                DOMAIN_SEPARATOR(),
+                keccak256(
+                    abi.encode(SETTLE_TYPEHASH, groupId, settlementId, user, token, totalAmount, msg.sender, deadline)
                 )
-            ),
-            v,
-            r,
-            s
+            )
         );
+    }
+
+    /// @dev Minimal signature check (Solady SignatureCheckerLib used as reference only).
+    ///      - `oracle` has no code: ECDSA. Accepts 65-byte (r, s, v) and 64-byte EIP-2098 compact (r, vs)
+    ///        signatures; valid iff ecrecover(digest) == oracle and != address(0). Like solmate permit,
+    ///        high-s signatures are not rejected; malleation cannot replay because `settlementId` is consumed.
+    ///      - `oracle` has code: ERC-1271. Low-level staticcall of isValidSignature(digest, signature); valid iff
+    ///        the call succeeds, returns >= 32 bytes, and the first word is exactly the magic value 0x1626ba7e.
+    ///        Reverts, short/empty or garbage returndata yield false (InvalidSigner), never a bubbled revert.
+    ///        Only 32 bytes of returndata are copied. All remaining gas is forwarded (the oracle is owner-authorized).
+    ///      No ERC-6492 (counterfactual wallet) support: the oracle contract must already be deployed.
+    function _isValidOracleSignature(address oracle, bytes32 digest, bytes calldata signature)
+        internal
+        view
+        returns (bool)
+    {
+        if (oracle.code.length == 0) {
+            bytes32 r;
+            bytes32 s;
+            uint8 v;
+            if (signature.length == 65) {
+                assembly ("memory-safe") {
+                    r := calldataload(signature.offset)
+                    s := calldataload(add(signature.offset, 0x20))
+                    v := byte(0, calldataload(add(signature.offset, 0x40)))
+                }
+            } else if (signature.length == 64) {
+                bytes32 vs;
+                assembly ("memory-safe") {
+                    r := calldataload(signature.offset)
+                    vs := calldataload(add(signature.offset, 0x20))
+                }
+                s = vs & bytes32(0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+                v = uint8(uint256(vs >> 255)) + 27;
+            } else {
+                return false;
+            }
+
+            address recoveredAddress = ecrecover(digest, v, r, s);
+            return recoveredAddress != address(0) && recoveredAddress == oracle;
+        }
+
+        bytes memory data = abi.encodeCall(IERC1271.isValidSignature, (digest, signature));
+        bool success;
+        bytes32 result;
+        assembly ("memory-safe") {
+            success := staticcall(gas(), oracle, add(data, 0x20), mload(data), 0x00, 0x20)
+            if lt(returndatasize(), 0x20) { success := 0 }
+            result := mload(0x00)
+        }
+        return success && result == bytes32(IERC1271.isValidSignature.selector);
     }
 
     /// @dev Protocol fee taken from `totalAmount` before the referral split. Zero when `feeBps` is 0 or the amount rounds down.

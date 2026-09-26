@@ -100,7 +100,7 @@ interface IReferralGraph {
     /// @notice Error when a settle signature is past its deadline
     error SignatureExpired();
 
-    /// @notice Error when a settle signature does not recover to an oracle authorized for the group
+    /// @notice Error when the claimed settle oracle is not authorized for the group or its signature is invalid
     error InvalidSigner();
 
     /// @notice Get the referrer of a user in a group
@@ -234,19 +234,20 @@ interface IReferralGraph {
     function SETTLE_TYPEHASH() external view returns (bytes32);
 
     /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from that amount, pay the remainder to the payout chain, and emit ReferralSettlement
-    /// @dev Authorization is an EIP-712 `Settle` signature from an oracle authorized for `groupId` (checked at execution time,
-    ///      so unauthorizing an oracle invalidates its outstanding signatures). Anyone may submit, but the signed `payer`
-    ///      must equal `msg.sender`, and the full `totalAmount` is pulled from `msg.sender`. `settlementId` is the nonce:
-    ///      each id settles at most once per group. Does not retain a token balance.
+    /// @dev Authorization is an EIP-712 `Settle` signature from `oracle`, which must be authorized for `groupId` (checked at
+    ///      execution time, so unauthorizing an oracle invalidates its outstanding signatures). EOA oracles sign with
+    ///      ECDSA (65-byte r,s,v or 64-byte EIP-2098); contract oracles are verified with ERC-1271 `isValidSignature`
+    ///      (no ERC-6492). Anyone may submit, but the signed `payer` must equal `msg.sender`, and the full `totalAmount`
+    ///      is pulled from `msg.sender`. `settlementId` is the nonce: each id settles at most once per group.
+    ///      Does not retain a token balance.
     /// @param groupId The referral group
     /// @param settlementId Oracle-chosen idempotency key / signature nonce
     /// @param user Registered seed passed to getPayoutChain
     /// @param token ERC20 to pull and forward
     /// @param totalAmount Gross settle amount. Protocol fee (if any) is deducted first; the remainder is split across the referral chain. Caller approves exactly `totalAmount`.
     /// @param deadline Last timestamp (inclusive) at which the signature is valid
-    /// @param v Signature v
-    /// @param r Signature r
-    /// @param s Signature s
+    /// @param oracle Oracle that signed (EOA or ERC-1271 contract); must be authorized for `groupId`
+    /// @param signature ECDSA signature (EOA oracle) or ERC-1271 signature blob (contract oracle) over the Settle digest
     function settle(
         bytes32 groupId,
         bytes32 settlementId,
@@ -254,8 +255,7 @@ interface IReferralGraph {
         address token,
         uint256 totalAmount,
         uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
+        address oracle,
+        bytes calldata signature
     ) external;
 }
