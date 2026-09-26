@@ -17,6 +17,8 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
 
     /// @notice Maximum paid recipients, matching RewardCalculator
     uint256 public constant MAX_PAYOUT_LEVELS = 10;
+    /// @notice Basis-point denominator. 10000 bps = 100%.
+    uint256 public constant BPS_DENOMINATOR = 10_000;
     /// @notice Special address representing the root of all referral trees
     address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
@@ -43,6 +45,12 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
 
     /// @notice Geometric split used by settle
     IRewardCalculator public rewardCalculator;
+
+    /// @notice Global protocol fee in basis points. Defaults to 0 (no charge).
+    uint16 public feeBps;
+
+    /// @notice Recipient of the protocol fee charged on settle
+    address public feeRecipient;
 
     /// @notice groupId => settlementId => already settled
     mapping(bytes32 => mapping(bytes32 => bool)) private _settled;
@@ -333,6 +341,15 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     }
 
     /// @inheritdoc IReferralGraph
+    function setProtocolFee(uint16 bps, address recipient) external onlyOwner {
+        if (bps > BPS_DENOMINATOR) revert FeeTooHigh();
+        if (bps > 0 && recipient == address(0)) revert InvalidFeeRecipient();
+        feeBps = bps;
+        feeRecipient = recipient;
+        emit ProtocolFeeSet(bps, recipient);
+    }
+
+    /// @inheritdoc IReferralGraph
     function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
         external
         onlySettlementOracle(groupId)
@@ -365,6 +382,20 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
             payoutToken.safeTransferFrom(msg.sender, chain[i], amounts[i]);
         }
 
+        uint256 protocolFee = _protocolFee(totalAmount);
+        if (protocolFee > 0) {
+            address recipient = feeRecipient;
+            payoutToken.safeTransferFrom(msg.sender, recipient, protocolFee);
+            emit ProtocolFeeCharged(groupId, settlementId, token, recipient, protocolFee);
+        }
+
         emit ReferralSettlement(groupId, settlementId, user, token, totalAmount, chain, amounts);
+    }
+
+    /// @dev Protocol fee charged to the settle caller, on top of `totalAmount`. Zero when `feeBps` is 0 or the amount rounds down.
+    function _protocolFee(uint256 totalAmount) internal view returns (uint256) {
+        uint16 bps = feeBps;
+        if (bps == 0) return 0;
+        return (totalAmount * bps) / BPS_DENOMINATOR;
     }
 }

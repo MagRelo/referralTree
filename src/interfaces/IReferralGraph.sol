@@ -37,6 +37,19 @@ interface IReferralGraph {
     /// @notice Emitted when the owner sets the reward calculator used by settle
     event RewardCalculatorSet(address indexed calculator);
 
+    /// @notice Emitted when the owner sets the global protocol fee
+    event ProtocolFeeSet(uint16 bps, address indexed recipient);
+
+    /// @notice Emitted when settle charges the protocol fee to the caller
+    /// @dev Separate from ReferralSettlement. totalAmount on that event is still the referral-network fee.
+    event ProtocolFeeCharged(
+        bytes32 indexed groupId,
+        bytes32 indexed settlementId,
+        address indexed token,
+        address recipient,
+        uint256 amount
+    );
+
     /// @notice Error when user address is invalid (zero address)
     error InvalidUserAddress();
 
@@ -81,6 +94,12 @@ interface IReferralGraph {
 
     /// @notice Error when the calculator split does not match the payout chain
     error InvalidSplit();
+
+    /// @notice Error when the protocol fee is above 100%
+    error FeeTooHigh();
+
+    /// @notice Error when a non-zero protocol fee has no recipient
+    error InvalidFeeRecipient();
 
     /// @notice Get the referrer of a user in a group
     /// @param user The user to query
@@ -193,13 +212,25 @@ interface IReferralGraph {
     /// @param calculator RewardCalculator address
     function setRewardCalculator(address calculator) external;
 
+    /// @notice Global protocol fee in basis points. 10000 = 100%. Defaults to 0.
+    function feeBps() external view returns (uint16);
+
+    /// @notice Recipient of the protocol fee charged on settle
+    function feeRecipient() external view returns (address);
+
+    /// @notice Set the global protocol fee. Only the owner.
+    /// @dev `bps == 0` charges nothing. A non-zero fee requires a recipient.
+    /// @param bps Fee in basis points of `totalAmount`, charged on top of the referral payout
+    /// @param recipient Address that receives the protocol fee
+    function setProtocolFee(uint16 bps, address recipient) external;
+
     /// @notice Pull `totalAmount` of `token` from the caller, pay the payout chain, and emit ReferralSettlement
-    /// @dev `msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. The fee is pulled from `msg.sender`. Does not retain a token balance.
+    /// @dev `msg.sender` or `tx.origin` must be an oracle authorized for `groupId`. Referral payouts and any protocol fee are pulled from `msg.sender` in this transaction. Does not retain a token balance.
     /// @param groupId The referral group
     /// @param settlementId Caller-chosen idempotency key
     /// @param user Registered seed passed to getPayoutChain
     /// @param token ERC20 to pull and forward
-    /// @param totalAmount Referral-network fee. Caller must approve this contract for at least this amount.
+    /// @param totalAmount Referral-network fee. Caller must also approve the protocol fee (`totalAmount * feeBps / 10000`) when `feeBps` is non-zero.
     function settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount)
         external;
 }

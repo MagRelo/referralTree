@@ -32,6 +32,8 @@ contract ReferralGraphTest is Test {
     function testInitialSetup() public {
         assertEq(referralGraph.owner(), owner);
         assertEq(referralGraph.REFERRAL_ROOT(), address(0x0000000000000000000000000000000000000001));
+        assertEq(referralGraph.feeBps(), 0);
+        assertEq(referralGraph.feeRecipient(), address(0));
     }
 
     function testGroupAutoCreated() public {
@@ -783,5 +785,154 @@ contract ReferralGraphTest is Test {
         assertGt(token.balanceOf(user3), 0);
         assertGt(token.balanceOf(user1), 0);
         assertEq(token.balanceOf(user1) + token.balanceOf(user3), total);
+    }
+
+    function testOnlyOwnerCanSetProtocolFee() public {
+        vm.prank(user1);
+        vm.expectRevert("UNAUTHORIZED");
+        referralGraph.setProtocolFee(100, user1);
+    }
+
+    function testSetProtocolFeeRejectsAbove100Percent() public {
+        vm.prank(owner);
+        vm.expectRevert(IReferralGraph.FeeTooHigh.selector);
+        referralGraph.setProtocolFee(10_001, user1);
+    }
+
+    function testSetProtocolFeeRequiresRecipientWhenNonZero() public {
+        vm.prank(owner);
+        vm.expectRevert(IReferralGraph.InvalidFeeRecipient.selector);
+        referralGraph.setProtocolFee(1, address(0));
+    }
+
+    function testSetProtocolFeeZeroAllowsZeroRecipient() public {
+        vm.prank(owner);
+        referralGraph.setProtocolFee(100, user1);
+        assertEq(referralGraph.feeBps(), 100);
+        assertEq(referralGraph.feeRecipient(), user1);
+
+        vm.prank(owner);
+        referralGraph.setProtocolFee(0, address(0));
+        assertEq(referralGraph.feeBps(), 0);
+        assertEq(referralGraph.feeRecipient(), address(0));
+    }
+
+    function testSettleChargesProtocolFeeOnTop() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        address feeTo = address(9);
+        uint16 feeBps = 250; // 2.5%
+        uint256 total = 1_000_000;
+        uint256 protocolFee = (total * feeBps) / 10_000;
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        vm.prank(owner);
+        referralGraph.setProtocolFee(feeBps, feeTo);
+
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+
+        token.mint(oracle, total + protocolFee);
+        vm.prank(oracle);
+        token.approve(address(referralGraph), total + protocolFee);
+
+        bytes32 settlementId = keccak256("fee-1");
+        address[] memory chain = referralGraph.getPayoutChain(user1, testGroup, 10);
+        uint256[] memory amounts = calculator.calculateRewards(total, chain.length);
+
+        vm.expectEmit(true, true, true, true, address(referralGraph));
+        emit IReferralGraph.ProtocolFeeCharged(testGroup, settlementId, address(token), feeTo, protocolFee);
+        vm.expectEmit(true, true, true, true, address(referralGraph));
+        emit IReferralGraph.ReferralSettlement(testGroup, settlementId, user1, address(token), total, chain, amounts);
+
+        vm.prank(oracle);
+        referralGraph.settle(testGroup, settlementId, user1, address(token), total);
+
+        assertEq(token.balanceOf(user1), total);
+        assertEq(token.balanceOf(feeTo), protocolFee);
+        assertEq(token.balanceOf(oracle), 0);
+        assertEq(token.balanceOf(address(referralGraph)), 0);
+    }
+
+    function testSettleDoesNotChargeWhenFeeRoundsToZero() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        address feeTo = address(9);
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        vm.prank(owner);
+        referralGraph.setProtocolFee(1, feeTo);
+
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+
+        uint256 total = 1;
+        token.mint(oracle, total);
+        vm.prank(oracle);
+        token.approve(address(referralGraph), total);
+
+        vm.prank(oracle);
+        referralGraph.settle(testGroup, bytes32("dust"), user1, address(token), total);
+
+        assertEq(token.balanceOf(user1), total);
+        assertEq(token.balanceOf(feeTo), 0);
+        assertEq(token.balanceOf(address(referralGraph)), 0);
+    }
+
+    function testSettleRequiresApprovalForProtocolFee() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        address feeTo = address(9);
+        uint256 total = 10_000;
+        uint256 protocolFee = (total * 100) / 10_000;
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        vm.prank(owner);
+        referralGraph.setProtocolFee(100, feeTo);
+
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+
+        token.mint(oracle, total + protocolFee);
+        vm.prank(oracle);
+        token.approve(address(referralGraph), total);
+
+        vm.expectRevert();
+        vm.prank(oracle);
+        referralGraph.settle(testGroup, bytes32("id"), user1, address(token), total);
+    }
+
+    function testSettleUsesZeroFeeAfterFeeDisabled() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        vm.prank(owner);
+        referralGraph.setProtocolFee(500, address(9));
+        vm.prank(owner);
+        referralGraph.setProtocolFee(0, address(0));
+
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+        vm.prank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+
+        uint256 total = 1000;
+        token.mint(oracle, total);
+        vm.prank(oracle);
+        token.approve(address(referralGraph), total);
+
+        vm.prank(oracle);
+        referralGraph.settle(testGroup, bytes32("id"), user1, address(token), total);
+
+        assertEq(token.balanceOf(user1), total);
+        assertEq(token.balanceOf(address(9)), 0);
+        assertEq(token.balanceOf(oracle), 0);
     }
 }

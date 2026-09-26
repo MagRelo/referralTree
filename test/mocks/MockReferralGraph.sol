@@ -187,5 +187,15 @@ contract MockReferralGraph is IReferralGraph {
 
     function setRewardCalculator(address) external {}
 
+    function feeBps() external pure returns (uint16) {
+        return 0;
+    }
+
+    function feeRecipient() external pure returns (address) {
+        return address(0);
+    }
+
+    function setProtocolFee(uint16, address) external {}
+
     function settle(bytes32, bytes32, address, address, uint256) external {}
 }
