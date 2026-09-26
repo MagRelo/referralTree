@@ -457,21 +457,24 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         );
     }
 
-    /// @dev Minimal signature check (Solady SignatureCheckerLib used as reference only).
-    ///      - `oracle` has no code: ECDSA. Accepts 65-byte (r, s, v) and 64-byte EIP-2098 compact (r, vs)
-    ///        signatures; valid iff ecrecover(digest) == oracle and != address(0). Like solmate permit,
-    ///        high-s signatures are not rejected; malleation cannot replay because `settlementId` is consumed.
-    ///      - `oracle` has code: ERC-1271. Low-level staticcall of isValidSignature(digest, signature); valid iff
-    ///        the call succeeds, returns >= 32 bytes, and the first word is exactly the magic value 0x1626ba7e.
-    ///        Reverts, short/empty or garbage returndata yield false (InvalidSigner), never a bubbled revert.
-    ///        Only 32 bytes of returndata are copied. All remaining gas is forwarded (the oracle is owner-authorized).
-    ///      No ERC-6492 (counterfactual wallet) support: the oracle contract must already be deployed.
+    /// @dev Minimal signature check (Solady SignatureCheckerLib used as reference only). Order:
+    ///      1. If `signature` is 65 bytes (r, s, v) or 64 bytes (EIP-2098 r, vs): ecrecover(digest). Valid if the
+    ///         recovered address == oracle and != address(0), regardless of `oracle`'s code length. This keeps
+    ///         EIP-7702-delegated EOAs (code = 0xef0100 || delegate) working with plain ECDSA even when the
+    ///         delegate has no isValidSignature. Like solmate permit, high-s signatures are not rejected;
+    ///         malleation cannot replay because `settlementId` is consumed.
+    ///      2. Otherwise, if `oracle` has code: ERC-1271. Low-level staticcall of isValidSignature(digest, signature);
+    ///         valid iff the call succeeds, returns >= 32 bytes, and the first word is exactly 0x1626ba7e.
+    ///         Reverts, short/empty or garbage returndata yield false (InvalidSigner), never a bubbled revert.
+    ///         Only 32 bytes of returndata are copied. All remaining gas is forwarded (the oracle is owner-authorized).
+    ///      3. Otherwise invalid.
+    ///      No ERC-6492 (counterfactual wallet) support: a contract oracle must already be deployed.
     function _isValidOracleSignature(address oracle, bytes32 digest, bytes calldata signature)
         internal
         view
         returns (bool)
     {
-        if (oracle.code.length == 0) {
+        if (signature.length == 65 || signature.length == 64) {
             bytes32 r;
             bytes32 s;
             uint8 v;
@@ -481,7 +484,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
                     s := calldataload(add(signature.offset, 0x20))
                     v := byte(0, calldataload(add(signature.offset, 0x40)))
                 }
-            } else if (signature.length == 64) {
+            } else {
                 bytes32 vs;
                 assembly ("memory-safe") {
                     r := calldataload(signature.offset)
@@ -489,13 +492,13 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
                 }
                 s = vs & bytes32(0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
                 v = uint8(uint256(vs >> 255)) + 27;
-            } else {
-                return false;
             }
 
             address recoveredAddress = ecrecover(digest, v, r, s);
-            return recoveredAddress != address(0) && recoveredAddress == oracle;
+            if (recoveredAddress != address(0) && recoveredAddress == oracle) return true;
         }
+
+        if (oracle.code.length == 0) return false;
 
         bytes memory data = abi.encodeCall(IERC1271.isValidSignature, (digest, signature));
         bool success;

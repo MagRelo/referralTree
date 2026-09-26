@@ -124,13 +124,16 @@ Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 t
 - The signer's oracle authorization is checked when `settle` executes, so `unauthorizeOracle` invalidates that oracle's outstanding signatures.
 - `DOMAIN_SEPARATOR()` is cached for the deploy chain id and recomputed if the chain id changes (fork), as in solmate `ERC20.permit`. High-s signatures are not rejected (also as in solmate); since `settlementId` is consumed on first use, a malleated signature cannot replay a settlement.
 
-**Oracle types.** `oracle` must be authorized for `groupId` (checked first).
+**Verification order.** `oracle` must be authorized for `groupId` (checked first). Then:
 
-- **EOA oracle** (no code): ECDSA over the EIP-712 digest, 65-byte `r‖s‖v` or 64-byte EIP-2098 compact `r‖vs`. Valid iff `ecrecover(digest) == oracle`.
-- **Contract oracle** (e.g. a Safe or smart account): ERC-1271. The graph `staticcall`s `oracle.isValidSignature(digest, signature)` and accepts only if the call succeeds and returns exactly the magic value `0x1626ba7e` (ABI-encoded, at least 32 bytes). A reverting or garbage-returning wallet makes `settle` revert with `InvalidSigner`.
+1. **ECDSA first:** if `signature` is 65 bytes (`r‖s‖v`) or 64 bytes (EIP-2098 compact `r‖vs`) and `ecrecover(digest) == oracle` (non-zero), it is valid — regardless of whether `oracle` has code. This covers plain EOAs and **EIP-7702-delegated EOAs** (code `0xef0100‖delegate`), even if the delegate has no `isValidSignature`.
+2. **ERC-1271 fallback:** otherwise, if `oracle` has code (a Safe, smart account, or 7702 EOA whose delegate implements 1271, e.g. with session keys), the graph `staticcall`s `oracle.isValidSignature(digest, signature)` and accepts only if the call succeeds and returns exactly the magic value `0x1626ba7e` (ABI-encoded, at least 32 bytes). A reverting or garbage-returning wallet makes `settle` revert with `InvalidSigner`.
+3. Otherwise invalid (`InvalidSigner`).
+
 - **Trust:** a contract oracle decides for itself what counts as a valid signature, so authorizing one delegates settle authority for the group to that contract's logic (and its upgrades/modules).
 - **Gas:** all remaining gas is forwarded to `isValidSignature`; the payer pays for it. Only 32 bytes of returndata are copied.
-- **Not supported:** ERC-6492 (signatures from not-yet-deployed wallets) — the oracle contract must be deployed. EOAs with EIP-7702 delegation have code, so they are verified via ERC-1271 and their delegate must implement `isValidSignature`.
+- **7702:** a delegated EOA's own key always remains valid via step 1; the delegate cannot revoke it.
+- **Not supported:** ERC-6492 (signatures from not-yet-deployed wallets) — a contract oracle must be deployed.
 
 The global protocol fee defaults to **0** and is hard-capped at `MAX_FEE_BPS` (1000 bps = 10%). When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.totalAmount` is the referral distributable (`totalAmount - protocolFee`).
 
@@ -249,7 +252,7 @@ referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
 - `registeredCount(bytes32 groupId)` - Successful registrations in the group (excludes `REFERRAL_ROOT`; never decrements)
 - `skiplistedCount(bytes32 groupId)` - Current skiplist length (no extra storage)
 - `setRewardCalculator(address calculator)` - Set the geometric splitter used by `settle` (owner only)
-- `settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount, uint256 deadline, address oracle, bytes signature)` - Verify `oracle`'s EIP-712 `Settle` signature (ECDSA for EOAs, ERC-1271 for contracts; `payer = msg.sender`), pull the referral fee from `msg.sender`, pay the payout chain, emit `ReferralSettlement`
+- `settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount, uint256 deadline, address oracle, bytes signature)` - Verify `oracle`'s EIP-712 `Settle` signature (ECDSA against `oracle` first, then ERC-1271 if `oracle` has code; `payer = msg.sender`), pull the referral fee from `msg.sender`, pay the payout chain, emit `ReferralSettlement`
 - `DOMAIN_SEPARATOR()` / `SETTLE_TYPEHASH()` - EIP-712 domain separator and `Settle` typehash for off-chain signers
 - `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, deducted from the settle total before the referral split (owner only; defaults to 0; capped at `MAX_FEE_BPS` = 1000, i.e. 10%)
 - `feeBps()` / `feeRecipient()` - Current protocol fee config

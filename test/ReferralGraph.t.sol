@@ -7,6 +7,7 @@ import {IReferralGraph} from "../src/interfaces/IReferralGraph.sol";
 import {RewardCalculator} from "../src/core/RewardCalculator.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockERC1271Wallet} from "./mocks/MockERC1271Wallet.sol";
+import {NoopDelegate, SessionKey1271Delegate} from "./mocks/Mock7702Delegates.sol";
 
 /// Worthless token whose transferFrom is a no-op returning true (used by the tx.origin regression test).
 contract NoopToken {
@@ -1502,5 +1503,134 @@ contract ReferralGraphTest is Test {
             payer, testGroup, bytes32("k"), user3, address(token), SIG_TOTAL, deadline, oracle, abi.encodePacked(r, vs)
         );
         assertEq(token.balanceOf(payer), 0);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    EIP-7702 DELEGATED EOA ORACLE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Delegate `eoa` to `delegate` with a real EIP-7702 authorization (Prague) and authorize it as an oracle.
+    function _delegate7702Oracle(uint256 pk, address delegate) internal returns (address eoa) {
+        eoa = vm.addr(pk);
+        vm.setEvmVersion("prague");
+        vm.signAndAttachDelegation(delegate, pk);
+        (bool ok,) = eoa.call(""); // the 7702 "transaction" that installs the delegation
+        ok;
+        assertEq(eoa.code, abi.encodePacked(hex"ef0100", delegate), "delegation designator installed");
+        vm.prank(owner);
+        referralGraph.authorizeOracle(eoa, testGroup);
+    }
+
+    function testDelegated7702OracleWithoutErc1271SettlesWithEcdsa() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        uint256 pk = 0x7702;
+        address eoa = _delegate7702Oracle(pk, address(new NoopDelegate()));
+        assertGt(eoa.code.length, 0);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig =
+            _packed(_sign(pk, testGroup, bytes32("7702"), user3, address(token), SIG_TOTAL, payer, deadline));
+        _submitAs(payer, testGroup, bytes32("7702"), user3, address(token), SIG_TOTAL, deadline, eoa, sig);
+        assertEq(token.balanceOf(payer), 0);
+    }
+
+    function testDelegated7702OracleEip2098SignatureSettles() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        uint256 pk = 0x7702;
+        address eoa = _delegate7702Oracle(pk, address(new NoopDelegate()));
+
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes32 structHash = keccak256(
+            abi.encode(SETTLE_TYPEHASH, testGroup, bytes32("c"), user3, address(token), SIG_TOTAL, payer, deadline)
+        );
+        (bytes32 r, bytes32 vs) =
+            vm.signCompact(pk, keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash)));
+        _submitAs(
+            payer, testGroup, bytes32("c"), user3, address(token), SIG_TOTAL, deadline, eoa, abi.encodePacked(r, vs)
+        );
+        assertEq(token.balanceOf(payer), 0);
+    }
+
+    function testDelegated7702OracleWithoutErc1271RejectsForeignSignature() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        address eoa = _delegate7702Oracle(0x7702, address(new NoopDelegate()));
+
+        uint256 deadline = block.timestamp + 1 hours;
+        // Signed by some other key: ECDSA does not match, delegate has no isValidSignature -> InvalidSigner
+        bytes memory sig =
+            _packed(_sign(0xBAD, testGroup, bytes32("7702"), user3, address(token), SIG_TOTAL, payer, deadline));
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(payer, testGroup, bytes32("7702"), user3, address(token), SIG_TOTAL, deadline, eoa, sig);
+    }
+
+    function testDelegated7702OracleWithErc1271DelegateUsesSessionKey() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        token.mint(payer, SIG_TOTAL);
+        vm.prank(payer);
+        token.approve(address(referralGraph), SIG_TOTAL * 2);
+        uint256 sessionPk = 0x5E55;
+        uint256 rootPk = 0x7702;
+        address eoa = _delegate7702Oracle(rootPk, address(new SessionKey1271Delegate(vm.addr(sessionPk))));
+
+        uint256 deadline = block.timestamp + 1 hours;
+        // Non-ECDSA-format (66-byte) session-key signature -> verified via the delegate's isValidSignature
+        Sig memory ss = _sign(sessionPk, testGroup, bytes32("s1"), user3, address(token), SIG_TOTAL, payer, deadline);
+        bytes memory sessionSig = abi.encodePacked(uint8(0x01), ss.r, ss.s, ss.v);
+        _submitAs(payer, testGroup, bytes32("s1"), user3, address(token), SIG_TOTAL, deadline, eoa, sessionSig);
+        assertEq(token.balanceOf(payer), SIG_TOTAL);
+
+        // Wrong session key -> delegate returns non-magic -> InvalidSigner
+        Sig memory bad = _sign(0xBAD, testGroup, bytes32("s2"), user3, address(token), SIG_TOTAL, payer, deadline);
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(
+            payer,
+            testGroup,
+            bytes32("s2"),
+            user3,
+            address(token),
+            SIG_TOTAL,
+            deadline,
+            eoa,
+            abi.encodePacked(uint8(0x01), bad.r, bad.s, bad.v)
+        );
+
+        // Root key plain ECDSA still works for the same delegated EOA
+        bytes memory rootSig =
+            _packed(_sign(rootPk, testGroup, bytes32("s2"), user3, address(token), SIG_TOTAL, payer, deadline));
+        _submitAs(payer, testGroup, bytes32("s2"), user3, address(token), SIG_TOTAL, deadline, eoa, rootSig);
+        assertEq(token.balanceOf(payer), 0);
+    }
+
+    function testContractOracle65ByteNonRecoveringSigFallsBackTo1271AndIsRejected() public {
+        address payer = address(0xBEEF);
+        MockERC20 token = _fixture(payer);
+        MockERC1271Wallet wallet = _walletOracle(); // Valid mode: accepts only its owner's signature
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // 65-byte ECDSA from a key that is neither the wallet nor its owner
+        bytes memory sig =
+            _packed(_sign(0xBAD, testGroup, bytes32("f"), user3, address(token), SIG_TOTAL, payer, deadline));
+        vm.expectCall(
+            address(wallet),
+            abi.encodeCall(
+                MockERC1271Wallet.isValidSignature, (_settleDigestFor("f", payer, deadline, address(token)), sig)
+            )
+        );
+        vm.expectRevert(IReferralGraph.InvalidSigner.selector);
+        _submitAs(payer, testGroup, bytes32("f"), user3, address(token), SIG_TOTAL, deadline, address(wallet), sig);
+    }
+
+    function _settleDigestFor(bytes32 id, address payer, uint256 deadline, address token)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 structHash =
+            keccak256(abi.encode(SETTLE_TYPEHASH, testGroup, id, user3, token, SIG_TOTAL, payer, deadline));
+        return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
     }
 }

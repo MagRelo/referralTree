@@ -235,9 +235,10 @@ interface IReferralGraph {
 
     /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from that amount, pay the remainder to the payout chain, and emit ReferralSettlement
     /// @dev Authorization is an EIP-712 `Settle` signature from `oracle`, which must be authorized for `groupId` (checked at
-    ///      execution time, so unauthorizing an oracle invalidates its outstanding signatures). EOA oracles sign with
-    ///      ECDSA (65-byte r,s,v or 64-byte EIP-2098); contract oracles are verified with ERC-1271 `isValidSignature`
-    ///      (no ERC-6492). Anyone may submit, but the signed `payer` must equal `msg.sender`, and the full `totalAmount`
+    ///      execution time, so unauthorizing an oracle invalidates its outstanding signatures). A 65- or 64-byte
+    ///      (EIP-2098) signature is first checked with ecrecover against `oracle` (so EOAs, including EIP-7702-delegated
+    ///      EOAs, work with plain ECDSA); if that does not match and `oracle` has code, ERC-1271 `isValidSignature` is
+    ///      used (no ERC-6492). Anyone may submit, but the signed `payer` must equal `msg.sender`, and the full `totalAmount`
     ///      is pulled from `msg.sender`. `settlementId` is the nonce: each id settles at most once per group.
     ///      Does not retain a token balance.
     /// @param groupId The referral group
