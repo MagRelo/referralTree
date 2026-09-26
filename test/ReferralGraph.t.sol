@@ -914,10 +914,20 @@ contract ReferralGraphTest is Test {
         referralGraph.setProtocolFee(100, user1);
     }
 
-    function testSetProtocolFeeRejectsAbove100Percent() public {
+    function testSetProtocolFeeRejectsAboveMaxFeeBps() public {
+        assertEq(referralGraph.MAX_FEE_BPS(), 1_000);
+
         vm.prank(owner);
         vm.expectRevert(IReferralGraph.FeeTooHigh.selector);
-        referralGraph.setProtocolFee(10_001, user1);
+        referralGraph.setProtocolFee(1_001, user1);
+
+        vm.prank(owner);
+        vm.expectRevert(IReferralGraph.FeeTooHigh.selector);
+        referralGraph.setProtocolFee(10_000, user1);
+
+        vm.prank(owner);
+        referralGraph.setProtocolFee(1_000, user1);
+        assertEq(referralGraph.feeBps(), 1_000);
     }
 
     function testSetProtocolFeeRequiresRecipientWhenNonZero() public {

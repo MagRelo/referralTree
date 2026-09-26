@@ -19,6 +19,8 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     uint256 public constant MAX_PAYOUT_LEVELS = 10;
     /// @notice Basis-point denominator. 10000 bps = 100%.
     uint256 public constant BPS_DENOMINATOR = 10_000;
+    /// @notice Hard cap on the protocol fee. 1000 bps = 10%.
+    uint256 public constant MAX_FEE_BPS = 1_000;
     /// @notice Special address representing the root of all referral trees
     address public constant REFERRAL_ROOT = address(0x0000000000000000000000000000000000000001);
 
@@ -350,7 +352,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
 
     /// @inheritdoc IReferralGraph
     function setProtocolFee(uint16 bps, address recipient) external onlyOwner {
-        if (bps > BPS_DENOMINATOR) revert FeeTooHigh();
+        if (bps > MAX_FEE_BPS) revert FeeTooHigh();
         if (bps > 0 && recipient == address(0)) revert InvalidFeeRecipient();
         feeBps = bps;
         feeRecipient = recipient;

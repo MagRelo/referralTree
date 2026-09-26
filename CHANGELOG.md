@@ -13,7 +13,7 @@ New deploy. Live Base / Base Sepolia ReferralGraph contracts are not upgradeable
 - `ReferralGraph.registeredCount(groupId)` — successful registrations per group (denominator; excludes `REFERRAL_ROOT`; never decrements).
 - `ReferralGraph.skiplistedCount(groupId)` — current skiplist length without copying the array.
 - `ReferralGraph.settle` pulls an ERC20 fee from `msg.sender`, pays `getPayoutChain`, and emits `ReferralSettlement`. Authorized by an EIP-712 `Settle` signature from an oracle for the group (solmate-permit-style domain separator; payload binds `groupId`, `settlementId`, `user`, `token`, `totalAmount`, `payer = msg.sender`, `deadline`). Anyone may submit; no `tx.origin` or caller whitelist. The graph does not keep a balance. `settlementId` is unique per group and acts as the signature nonce.
-- Optional global protocol fee on `settle` (`setProtocolFee`). Defaults to 0. When set, `totalAmount * feeBps / 10000` is deducted from the settle total and sent to `feeRecipient`; the remainder is the referral split. Caller pays exactly `totalAmount`. `ReferralSettlement.totalAmount` is the referral distributable.
+- Optional global protocol fee on `settle` (`setProtocolFee`). Defaults to 0; capped at `MAX_FEE_BPS` (1000 bps = 10%). When set, `totalAmount * feeBps / 10000` is deducted from the settle total and sent to `feeRecipient`; the remainder is the referral split. Caller pays exactly `totalAmount`. `ReferralSettlement.totalAmount` is the referral distributable.
 
 ### Unchanged
 

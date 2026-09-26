@@ -124,7 +124,7 @@ Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 t
 - The signer's oracle authorization is checked when `settle` executes, so `unauthorizeOracle` invalidates that oracle's outstanding signatures.
 - `DOMAIN_SEPARATOR()` is cached for the deploy chain id and recomputed if the chain id changes (fork), as in solmate `ERC20.permit`. High-s signatures are not rejected (also as in solmate); since `settlementId` is consumed on first use, a malleated signature cannot replay a settlement.
 
-The global protocol fee defaults to **0**. When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.totalAmount` is the referral distributable (`totalAmount - protocolFee`).
+The global protocol fee defaults to **0** and is hard-capped at `MAX_FEE_BPS` (1000 bps = 10%). When the owner sets `feeBps`, settle deducts `totalAmount * feeBps / 10000` from the settle total at the start and sends that share to `feeRecipient`. The remainder is split across the referral chain. The caller pays exactly `totalAmount` (not an extra top-up). `ReferralSettlement.totalAmount` is the referral distributable (`totalAmount - protocolFee`).
 
 ```solidity
 // Off-chain: oracle signs Settle{groupId, settlementId, user, token, totalAmount, payer, deadline} -> (v, r, s)
@@ -242,7 +242,7 @@ referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
 - `setRewardCalculator(address calculator)` - Set the geometric splitter used by `settle` (owner only)
 - `settle(bytes32 groupId, bytes32 settlementId, address user, address token, uint256 totalAmount, uint256 deadline, uint8 v, bytes32 r, bytes32 s)` - Verify the oracle's EIP-712 `Settle` signature (`payer = msg.sender`), pull the referral fee from `msg.sender`, pay the payout chain, emit `ReferralSettlement`
 - `DOMAIN_SEPARATOR()` / `SETTLE_TYPEHASH()` - EIP-712 domain separator and `Settle` typehash for off-chain signers
-- `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, deducted from the settle total before the referral split (owner only; defaults to 0)
+- `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, deducted from the settle total before the referral split (owner only; defaults to 0; capped at `MAX_FEE_BPS` = 1000, i.e. 10%)
 - `feeBps()` / `feeRecipient()` - Current protocol fee config
 
 `UserRegistered` is `event UserRegistered(bytes32 indexed groupId, address indexed user, address indexed referrer)` (**breaking ABI** vs v1; any subgraph / listener must be updated).

@@ -91,7 +91,7 @@ interface IReferralGraph {
     /// @notice Error when the calculator split does not match the payout chain
     error InvalidSplit();
 
-    /// @notice Error when the protocol fee is above 100%
+    /// @notice Error when the protocol fee is above MAX_FEE_BPS (10%)
     error FeeTooHigh();
 
     /// @notice Error when a non-zero protocol fee has no recipient
@@ -214,14 +214,14 @@ interface IReferralGraph {
     /// @param calculator RewardCalculator address
     function setRewardCalculator(address calculator) external;
 
-    /// @notice Global protocol fee in basis points. 10000 = 100%. Defaults to 0.
+    /// @notice Global protocol fee in basis points. 10000 = 100%; capped at MAX_FEE_BPS (1000 = 10%). Defaults to 0.
     function feeBps() external view returns (uint16);
 
     /// @notice Recipient of the protocol fee charged on settle
     function feeRecipient() external view returns (address);
 
     /// @notice Set the global protocol fee. Only the owner.
-    /// @dev `bps == 0` charges nothing. A non-zero fee requires a recipient.
+    /// @dev `bps == 0` charges nothing. A non-zero fee requires a recipient. Reverts with FeeTooHigh above MAX_FEE_BPS (1000 = 10%).
     /// @param bps Fee in basis points of `totalAmount`, deducted from the settle total before the referral split
     /// @param recipient Address that receives the protocol fee
     function setProtocolFee(uint16 bps, address recipient) external;
