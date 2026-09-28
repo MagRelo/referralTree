@@ -79,7 +79,7 @@ interface IReferralGraph {
     /// @notice Error when the reward calculator address is zero
     error InvalidRewardCalculator();
 
-    /// @notice Error when the payout token is the zero address
+    /// @notice Error when the payout token is the zero address or has no deployed code
     error InvalidToken();
 
     /// @notice Error when the settlement amount is zero
@@ -246,6 +246,8 @@ interface IReferralGraph {
     ///      EOAs, work with plain ECDSA); if that does not match and `oracle` has code, ERC-1271 `isValidSignature` is
     ///      used (no ERC-6492). Anyone may submit, but the signed `payer` must equal `msg.sender`, and the full `totalAmount`
     ///      is pulled from `msg.sender`. `settlementId` is the nonce: each id settles at most once per group.
+    ///      Reverts with InvalidToken if `token` is the zero address or has no code (e.g. a not-yet-deployed CREATE2
+    ///      address); the settlementId is not consumed and can be settled once the token exists.
     ///      Does not retain a token balance.
     /// @param groupId The referral group
     /// @param settlementId Oracle-chosen idempotency key / signature nonce

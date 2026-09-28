@@ -1696,4 +1696,67 @@ contract ReferralGraphTest is Test {
         assertEq(sumAmounts, distributedAmount);
         assertEq(token.balanceOf(feeTo), feeAmount);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                        TOKEN MUST HAVE CODE
+    //////////////////////////////////////////////////////////////*/
+
+    function testSettleRevertsForZeroOrCodelessTokenAndKeepsIdUnused() public {
+        address payer = address(0xBEEF);
+        MockERC20 real = _fixture(payer);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes32 id = bytes32("nocode");
+
+        // Zero address
+        Sig memory sig0 = _sign(ORACLE_PK, testGroup, id, user3, address(0), SIG_TOTAL, payer, deadline);
+        vm.expectRevert(IReferralGraph.InvalidToken.selector);
+        _submit(payer, testGroup, id, user3, address(0), SIG_TOTAL, deadline, sig0);
+
+        // Codeless address: rejected by the graph itself (InvalidToken), not by SafeTransferLib
+        address codeless = address(0xC0DE1E55);
+        assertEq(codeless.code.length, 0);
+        Sig memory sig1 = _sign(ORACLE_PK, testGroup, id, user3, codeless, SIG_TOTAL, payer, deadline);
+        vm.expectRevert(IReferralGraph.InvalidToken.selector);
+        _submit(payer, testGroup, id, user3, codeless, SIG_TOTAL, deadline, sig1);
+
+        // Code removed after it existed (etch then clear)
+        address cleared = address(0x70CE);
+        vm.etch(cleared, address(real).code);
+        vm.etch(cleared, "");
+        Sig memory sig2 = _sign(ORACLE_PK, testGroup, id, user3, cleared, SIG_TOTAL, payer, deadline);
+        vm.expectRevert(IReferralGraph.InvalidToken.selector);
+        _submit(payer, testGroup, id, user3, cleared, SIG_TOTAL, deadline, sig2);
+
+        // Nothing moved, and the settlementId was never consumed: a real token settles at the same id
+        assertEq(real.balanceOf(payer), SIG_TOTAL);
+        _settleSigned(payer, testGroup, id, user3, address(real), SIG_TOTAL);
+        assertEq(real.balanceOf(payer), 0);
+    }
+
+    function testSettleCreate2TokenRevertsBeforeDeployAndSettlesAfterWithSameId() public {
+        address payer = address(0xBEEF);
+        _fixture(payer);
+        bytes32 salt = keccak256("future-token");
+        bytes memory initCode = abi.encodePacked(type(MockERC20).creationCode, abi.encode("Future", "FUT", uint8(6)));
+        address predicted = vm.computeCreate2Address(salt, keccak256(initCode), address(this));
+        assertEq(predicted.code.length, 0);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes32 id = bytes32("create2");
+        Sig memory sig = _sign(ORACLE_PK, testGroup, id, user3, predicted, SIG_TOTAL, payer, deadline);
+
+        vm.expectRevert(IReferralGraph.InvalidToken.selector);
+        _submit(payer, testGroup, id, user3, predicted, SIG_TOTAL, deadline, sig);
+
+        MockERC20 deployed = new MockERC20{salt: salt}("Future", "FUT", 6);
+        assertEq(address(deployed), predicted);
+        deployed.mint(payer, SIG_TOTAL);
+        vm.prank(payer);
+        deployed.approve(address(referralGraph), SIG_TOTAL);
+
+        // Same oracle signature and same settlementId now settle
+        _submit(payer, testGroup, id, user3, predicted, SIG_TOTAL, deadline, sig);
+        assertEq(deployed.balanceOf(payer), 0);
+        assertEq(deployed.balanceOf(user1) + deployed.balanceOf(user2) + deployed.balanceOf(user3), SIG_TOTAL);
+    }
 }

@@ -379,6 +379,10 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
 
         if (address(rewardCalculator) == address(0)) revert RewardCalculatorNotSet();
         if (token == address(0)) revert InvalidToken();
+        // Defense in depth: SafeTransferLib (solmate 89365b8) already fails a transfer to a codeless token, but do not
+        // rely on the library for this. Rejects undeployed CREATE2 targets / removed code before any state write, so
+        // the settlementId stays usable.
+        if (token.code.length == 0) revert InvalidToken();
         if (totalAmount == 0) revert InvalidAmount();
         if (user == address(0) || user == REFERRAL_ROOT) revert InvalidUserAddress();
         if (_referrers[groupId][user] == address(0)) revert UserNotRegistered();

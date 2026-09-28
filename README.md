@@ -111,7 +111,7 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 
 `settle` is authorized by an EIP-712 signature from an oracle authorized for `groupId` (there is no `tx.origin` or caller whitelist). Anyone may submit the signature, but the signed `payer` must be the address that calls `settle`, because that is who the tokens are pulled from. An oracle settling for itself signs with `payer = oracle` and submits. The submitter passes the signing `oracle` address and the `signature` bytes. `register` still requires `msg.sender` itself to be the oracle.
 
-The graph resolves the chain, splits, pulls the tokens from `msg.sender`, pays, and emits. If a transfer fails, the call reverts and there is no event.
+The graph resolves the chain, splits, pulls the tokens from `msg.sender`, pays, and emits. If a transfer fails, the call reverts and there is no event. `token` must be a deployed contract: a zero or codeless address (e.g. a CREATE2 token not yet deployed) reverts with `InvalidToken` before anything is written, so the `settlementId` remains usable.
 
 **Signed payload** (domain: `name = "ReferralGraph"`, `version = "1"`, `chainId`, `verifyingContract = graph`):
 
