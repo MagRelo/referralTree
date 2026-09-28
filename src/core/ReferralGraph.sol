@@ -46,26 +46,32 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     /// @notice Successful registrations per group (excludes REFERRAL_ROOT; never decrements)
     mapping(bytes32 => uint256) private _registeredCount;
 
-    /// @notice Geometric split used by settle
+    /// @notice Geometric split used by rewardRoots
     IRewardCalculator public rewardCalculator;
 
     /// @notice Global protocol fee in basis points. Defaults to 0 (no charge).
     uint16 public feeBps;
 
-    /// @notice Recipient of the protocol fee charged on settle
+    /// @notice Recipient of the protocol fee charged on rewardRoots / rewardLeaf
     address public feeRecipient;
 
-    /// @notice groupId => settlementId => already settled. Doubles as the EIP-712 settle nonce.
-    mapping(bytes32 => mapping(bytes32 => bool)) private _settled;
+    /// @notice groupId => rewardId => used. One namespace shared by rewardRoots and rewardLeaf; doubles as the EIP-712 nonce.
+    mapping(bytes32 => mapping(bytes32 => bool)) private _usedRewardIds;
 
     /*//////////////////////////////////////////////////////////////
                             EIP-712 STORAGE
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice EIP-712 typehash for an oracle-signed settlement
-    /// @dev `payer` is the address that submits `settle` and whose tokens are pulled (`msg.sender`).
-    bytes32 public constant SETTLE_TYPEHASH = keccak256(
-        "Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)"
+    /// @notice EIP-712 typehash for an oracle-signed rewardRoots call
+    /// @dev `payer` is the address that submits the call and whose tokens are pulled (`msg.sender`).
+    bytes32 public constant REWARD_ROOTS_TYPEHASH = keccak256(
+        "RewardRoots(bytes32 groupId,bytes32 rewardId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)"
+    );
+
+    /// @notice EIP-712 typehash for an oracle-signed rewardLeaf call
+    /// @dev `payer` is the address that submits the call and whose tokens are pulled (`msg.sender`).
+    bytes32 public constant REWARD_LEAF_TYPEHASH = keccak256(
+        "RewardLeaf(bytes32 groupId,bytes32 rewardId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)"
     );
 
     uint256 internal immutable INITIAL_CHAIN_ID;
@@ -361,9 +367,9 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     }
 
     /// @inheritdoc IReferralGraph
-    function settle(
+    function rewardRoots(
         bytes32 groupId,
-        bytes32 settlementId,
+        bytes32 rewardId,
         address user,
         address token,
         uint256 totalAmount,
@@ -371,49 +377,104 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         address oracle,
         bytes calldata signature
     ) external nonReentrant {
-        if (block.timestamp > deadline) revert SignatureExpired();
-        if (!_authorizedOracles[groupId][oracle]) revert InvalidSigner();
-
-        bytes32 digest = _settleDigest(groupId, settlementId, user, token, totalAmount, deadline);
-        if (!_isValidOracleSignature(oracle, digest, signature)) revert InvalidSigner();
-
+        _verifyOracleSignature(
+            REWARD_ROOTS_TYPEHASH, groupId, rewardId, user, token, totalAmount, deadline, oracle, signature
+        );
         if (address(rewardCalculator) == address(0)) revert RewardCalculatorNotSet();
-        if (token == address(0)) revert InvalidToken();
-        if (totalAmount == 0) revert InvalidAmount();
-        if (user == address(0) || user == REFERRAL_ROOT) revert InvalidUserAddress();
-        if (_referrers[groupId][user] == address(0)) revert UserNotRegistered();
-        if (_settled[groupId][settlementId]) revert SettlementAlreadyUsed();
+        _validateReward(groupId, user, token, totalAmount);
+        _useRewardId(groupId, rewardId);
 
-        // Deduct protocol fee from the settle total up front. Caller pays `totalAmount` only.
+        // Protocol fee comes out of `totalAmount`; caller pays `totalAmount` only.
         uint256 protocolFee = _protocolFee(totalAmount);
-        uint256 distributable = totalAmount - protocolFee; // emitted as ReferralSettlement.distributedAmount
+        uint256 distributedAmount = totalAmount - protocolFee;
 
         address[] memory chain = this.getPayoutChain(user, groupId, MAX_PAYOUT_LEVELS);
         if (chain.length == 0) revert EmptyPayoutChain();
 
-        uint256[] memory amounts = rewardCalculator.calculateRewards(distributable, chain.length);
+        uint256[] memory amounts = rewardCalculator.calculateRewards(distributedAmount, chain.length);
         if (amounts.length != chain.length) revert InvalidSplit();
 
         uint256 sum;
         for (uint256 i = 0; i < amounts.length; i++) {
             sum += amounts[i];
         }
-        if (sum != distributable) revert InvalidSplit();
+        if (sum != distributedAmount) revert InvalidSplit();
 
-        _settled[groupId][settlementId] = true;
-
+        _payProtocolFee(groupId, rewardId, token, protocolFee);
         ERC20 payoutToken = ERC20(token);
-        if (protocolFee > 0) {
-            address recipient = feeRecipient;
-            payoutToken.safeTransferFrom(msg.sender, recipient, protocolFee);
-            emit ProtocolFeeCharged(groupId, settlementId, token, recipient, protocolFee);
-        }
         for (uint256 i = 0; i < chain.length; i++) {
             if (amounts[i] == 0) continue;
             payoutToken.safeTransferFrom(msg.sender, chain[i], amounts[i]);
         }
 
-        emit ReferralSettlement(groupId, settlementId, user, token, distributable, chain, amounts);
+        emit RootsRewarded(groupId, rewardId, user, token, distributedAmount, chain, amounts);
+    }
+
+    /// @inheritdoc IReferralGraph
+    function rewardLeaf(
+        bytes32 groupId,
+        bytes32 rewardId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline,
+        address oracle,
+        bytes calldata signature
+    ) external nonReentrant {
+        _verifyOracleSignature(
+            REWARD_LEAF_TYPEHASH, groupId, rewardId, user, token, totalAmount, deadline, oracle, signature
+        );
+        _validateReward(groupId, user, token, totalAmount);
+        _useRewardId(groupId, rewardId);
+
+        uint256 protocolFee = _protocolFee(totalAmount);
+        uint256 distributedAmount = totalAmount - protocolFee;
+
+        _payProtocolFee(groupId, rewardId, token, protocolFee);
+        ERC20(token).safeTransferFrom(msg.sender, user, distributedAmount);
+
+        emit LeafRewarded(groupId, rewardId, user, token, distributedAmount);
+    }
+
+    /// @dev Deadline, oracle authorization for `groupId`, and signature over the typed struct (`payer = msg.sender`).
+    function _verifyOracleSignature(
+        bytes32 typehash,
+        bytes32 groupId,
+        bytes32 rewardId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline,
+        address oracle,
+        bytes calldata signature
+    ) internal view {
+        if (block.timestamp > deadline) revert SignatureExpired();
+        if (!_authorizedOracles[groupId][oracle]) revert InvalidSigner();
+
+        bytes32 digest = _rewardDigest(typehash, groupId, rewardId, user, token, totalAmount, deadline);
+        if (!_isValidOracleSignature(oracle, digest, signature)) revert InvalidSigner();
+    }
+
+    /// @dev Checks shared by rewardRoots and rewardLeaf: token and amount set, `user` registered in the group.
+    function _validateReward(bytes32 groupId, address user, address token, uint256 totalAmount) internal view {
+        if (token == address(0)) revert InvalidToken();
+        if (totalAmount == 0) revert InvalidAmount();
+        if (user == address(0) || user == REFERRAL_ROOT) revert InvalidUserAddress();
+        if (_referrers[groupId][user] == address(0)) revert UserNotRegistered();
+    }
+
+    /// @dev Marks `rewardId` used for the group (shared by rewardRoots and rewardLeaf). Written before any transfer.
+    function _useRewardId(bytes32 groupId, bytes32 rewardId) internal {
+        if (_usedRewardIds[groupId][rewardId]) revert RewardIdUsed();
+        _usedRewardIds[groupId][rewardId] = true;
+    }
+
+    /// @dev Pulls a non-zero protocol fee from `msg.sender` to `feeRecipient` and emits ProtocolFeeCharged.
+    function _payProtocolFee(bytes32 groupId, bytes32 rewardId, address token, uint256 protocolFee) internal {
+        if (protocolFee == 0) return;
+        address recipient = feeRecipient;
+        ERC20(token).safeTransferFrom(msg.sender, recipient, protocolFee);
+        emit ProtocolFeeCharged(groupId, rewardId, token, recipient, protocolFee);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -437,10 +498,11 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         );
     }
 
-    /// @dev EIP-712 digest of a Settle struct with `payer = msg.sender`.
-    function _settleDigest(
+    /// @dev EIP-712 digest of a RewardRoots / RewardLeaf struct (selected by `typehash`) with `payer = msg.sender`.
+    function _rewardDigest(
+        bytes32 typehash,
         bytes32 groupId,
-        bytes32 settlementId,
+        bytes32 rewardId,
         address user,
         address token,
         uint256 totalAmount,
@@ -450,9 +512,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
             abi.encodePacked(
                 "\x19\x01",
                 DOMAIN_SEPARATOR(),
-                keccak256(
-                    abi.encode(SETTLE_TYPEHASH, groupId, settlementId, user, token, totalAmount, msg.sender, deadline)
-                )
+                keccak256(abi.encode(typehash, groupId, rewardId, user, token, totalAmount, msg.sender, deadline))
             )
         );
     }
@@ -462,7 +522,7 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
     ///         recovered address == oracle and != address(0), regardless of `oracle`'s code length. This keeps
     ///         EIP-7702-delegated EOAs (code = 0xef0100 || delegate) working with plain ECDSA even when the
     ///         delegate has no isValidSignature. Like solmate permit, high-s signatures are not rejected;
-    ///         malleation cannot replay because `settlementId` is consumed.
+    ///         malleation cannot replay because `rewardId` is consumed.
     ///      2. Otherwise, if `oracle` has code: ERC-1271. Low-level staticcall of isValidSignature(digest, signature);
     ///         valid iff the call succeeds, returns >= 32 bytes, and the first word is exactly 0x1626ba7e.
     ///         Reverts, short/empty or garbage returndata yield false (InvalidSigner), never a bubbled revert.

@@ -22,15 +22,15 @@ interface IReferralGraph {
     /// @notice Emitted when an address is removed from a group's skip list
     event AddressUnskiplisted(bytes32 indexed groupId, address indexed user);
 
-    /// @notice Emitted when an authorized oracle settles a payout through the graph
+    /// @notice Emitted by rewardRoots after the payout chain has been paid
     /// @dev topic0 is stable for indexers. Recipients are the skiplist-aware payout chain.
-    ///      `distributedAmount` is the net amount split across `recipients` (sum of `amounts`), i.e. the gross settle
+    ///      `distributedAmount` is the net amount split across `recipients` (sum of `amounts`), i.e. the gross
     ///      `totalAmount` minus the protocol fee. `distributedAmount + ProtocolFeeCharged.amount == totalAmount` (gross);
     ///      when no fee is charged there is no ProtocolFeeCharged event and `distributedAmount == totalAmount`.
     /// @param distributedAmount Net referral amount paid to `recipients` (excludes the protocol fee)
-    event ReferralSettlement(
+    event RootsRewarded(
         bytes32 indexed groupId,
-        bytes32 indexed settlementId,
+        bytes32 indexed rewardId,
         address indexed triggerUser,
         address token,
         uint256 distributedAmount,
@@ -38,18 +38,29 @@ interface IReferralGraph {
         uint256[] amounts
     );
 
-    /// @notice Emitted when the owner sets the reward calculator used by settle
+    /// @notice Emitted by rewardLeaf after `user` has been paid directly
+    /// @dev Same net/gross semantics as RootsRewarded: `distributedAmount + ProtocolFeeCharged.amount == totalAmount`.
+    /// @param distributedAmount Net amount paid to `user` (excludes the protocol fee)
+    event LeafRewarded(
+        bytes32 indexed groupId,
+        bytes32 indexed rewardId,
+        address indexed user,
+        address token,
+        uint256 distributedAmount
+    );
+
+    /// @notice Emitted when the owner sets the reward calculator used by rewardRoots
     event RewardCalculatorSet(address indexed calculator);
 
     /// @notice Emitted when the owner sets the global protocol fee
     event ProtocolFeeSet(uint16 bps, address indexed recipient);
 
-    /// @notice Emitted when settle takes the protocol fee from the settle total
-    /// @dev Emitted in the same settle as ReferralSettlement (same groupId/settlementId), only when the fee is non-zero.
-    ///      `ReferralSettlement.distributedAmount + amount == totalAmount` (gross settle amount). To get gross volume,
-    ///      sum both; do not add `amount` to a gross figure.
+    /// @notice Emitted when rewardRoots or rewardLeaf takes the protocol fee from `totalAmount`
+    /// @dev Emitted in the same call as RootsRewarded or LeafRewarded (same groupId/rewardId), only when the fee is
+    ///      non-zero. `distributedAmount + amount == totalAmount` (gross). To get gross volume, sum both; do not add
+    ///      `amount` to a gross figure.
     event ProtocolFeeCharged(
-        bytes32 indexed groupId, bytes32 indexed settlementId, address indexed token, address recipient, uint256 amount
+        bytes32 indexed groupId, bytes32 indexed rewardId, address indexed token, address recipient, uint256 amount
     );
 
     /// @notice Error when user address is invalid (zero address)
@@ -73,7 +84,7 @@ interface IReferralGraph {
     /// @notice Error when caller is not an authorized oracle
     error UnauthorizedOracle();
 
-    /// @notice Error when settle is called before a reward calculator is set
+    /// @notice Error when rewardRoots is called before a reward calculator is set
     error RewardCalculatorNotSet();
 
     /// @notice Error when the reward calculator address is zero
@@ -82,7 +93,7 @@ interface IReferralGraph {
     /// @notice Error when the payout token is the zero address
     error InvalidToken();
 
-    /// @notice Error when the settlement amount is zero
+    /// @notice Error when the reward amount is zero
     error InvalidAmount();
 
     /// @notice Error when the trigger user is not registered in the group
@@ -91,8 +102,8 @@ interface IReferralGraph {
     /// @notice Error when getPayoutChain returns no recipients
     error EmptyPayoutChain();
 
-    /// @notice Error when this settlementId was already used for the group
-    error SettlementAlreadyUsed();
+    /// @notice Error when this rewardId was already used for the group (by rewardRoots or rewardLeaf)
+    error RewardIdUsed();
 
     /// @notice Error when the calculator split does not match the payout chain
     error InvalidSplit();
@@ -103,10 +114,10 @@ interface IReferralGraph {
     /// @notice Error when a non-zero protocol fee has no recipient
     error InvalidFeeRecipient();
 
-    /// @notice Error when a settle signature is past its deadline
+    /// @notice Error when a reward signature is past its deadline
     error SignatureExpired();
 
-    /// @notice Error when the claimed settle oracle is not authorized for the group or its signature is invalid
+    /// @notice Error when the claimed oracle is not authorized for the group or its signature is invalid
     error InvalidSigner();
 
     /// @notice Get the referrer of a user in a group
@@ -223,41 +234,69 @@ interface IReferralGraph {
     /// @notice Global protocol fee in basis points. 10000 = 100%; capped at MAX_FEE_BPS (1000 = 10%). Defaults to 0.
     function feeBps() external view returns (uint16);
 
-    /// @notice Recipient of the protocol fee charged on settle
+    /// @notice Recipient of the protocol fee charged on rewardRoots / rewardLeaf
     function feeRecipient() external view returns (address);
 
     /// @notice Set the global protocol fee. Only the owner.
     /// @dev `bps == 0` charges nothing. A non-zero fee requires a recipient. Reverts with FeeTooHigh above MAX_FEE_BPS (1000 = 10%).
-    /// @param bps Fee in basis points of `totalAmount`, deducted from the settle total before the referral split
+    /// @param bps Fee in basis points of `totalAmount`, deducted from `totalAmount` before the reward is paid
     /// @param recipient Address that receives the protocol fee
     function setProtocolFee(uint16 bps, address recipient) external;
 
-    /// @notice EIP-712 domain separator for oracle-signed settlements (name "ReferralGraph", version "1")
+    /// @notice EIP-712 domain separator for oracle-signed rewards (name "ReferralGraph", version "1")
     function DOMAIN_SEPARATOR() external view returns (bytes32);
 
     /// @notice EIP-712 typehash:
-    ///         Settle(bytes32 groupId,bytes32 settlementId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)
-    function SETTLE_TYPEHASH() external view returns (bytes32);
+    ///         RewardRoots(bytes32 groupId,bytes32 rewardId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)
+    function REWARD_ROOTS_TYPEHASH() external view returns (bytes32);
 
-    /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from that amount, pay the remainder to the payout chain, and emit ReferralSettlement
-    /// @dev Authorization is an EIP-712 `Settle` signature from `oracle`, which must be authorized for `groupId` (checked at
-    ///      execution time, so unauthorizing an oracle invalidates its outstanding signatures). A 65- or 64-byte
-    ///      (EIP-2098) signature is first checked with ecrecover against `oracle` (so EOAs, including EIP-7702-delegated
-    ///      EOAs, work with plain ECDSA); if that does not match and `oracle` has code, ERC-1271 `isValidSignature` is
-    ///      used (no ERC-6492). Anyone may submit, but the signed `payer` must equal `msg.sender`, and the full `totalAmount`
-    ///      is pulled from `msg.sender`. `settlementId` is the nonce: each id settles at most once per group.
-    ///      Does not retain a token balance.
+    /// @notice EIP-712 typehash:
+    ///         RewardLeaf(bytes32 groupId,bytes32 rewardId,address user,address token,uint256 totalAmount,address payer,uint256 deadline)
+    function REWARD_LEAF_TYPEHASH() external view returns (bytes32);
+
+    /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from it, split the remainder across
+    ///         `user`'s skiplist-aware payout chain, and emit RootsRewarded
+    /// @dev Authorization is an EIP-712 `RewardRoots` signature from `oracle`, which must be authorized for `groupId`
+    ///      (checked at execution time, so unauthorizing an oracle invalidates its outstanding signatures). A 65- or
+    ///      64-byte (EIP-2098) signature is first checked with ecrecover against `oracle` (EOAs, including
+    ///      EIP-7702-delegated EOAs); if that does not match and `oracle` has code, ERC-1271 `isValidSignature` is used
+    ///      (no ERC-6492). Anyone may submit, but the signed `payer` must equal `msg.sender`; all tokens are pulled from
+    ///      `msg.sender`. `rewardId` is the nonce, shared with rewardLeaf: each id is used at most once per group.
+    ///      `user` must be registered in the group. Does not retain a token balance.
     /// @param groupId The referral group
-    /// @param settlementId Oracle-chosen idempotency key / signature nonce
+    /// @param rewardId Oracle-chosen idempotency key / signature nonce
     /// @param user Registered seed passed to getPayoutChain
     /// @param token ERC20 to pull and forward
-    /// @param totalAmount Gross settle amount. Protocol fee (if any) is deducted first; the remainder is split across the referral chain. Caller approves exactly `totalAmount`.
+    /// @param totalAmount Gross amount. Protocol fee (if any) is deducted first; the remainder is split across the referral chain. Caller approves exactly `totalAmount`.
     /// @param deadline Last timestamp (inclusive) at which the signature is valid
     /// @param oracle Oracle that signed (EOA or ERC-1271 contract); must be authorized for `groupId`
-    /// @param signature ECDSA signature (EOA oracle) or ERC-1271 signature blob (contract oracle) over the Settle digest
-    function settle(
+    /// @param signature ECDSA signature or ERC-1271 signature blob over the RewardRoots digest
+    function rewardRoots(
         bytes32 groupId,
-        bytes32 settlementId,
+        bytes32 rewardId,
+        address user,
+        address token,
+        uint256 totalAmount,
+        uint256 deadline,
+        address oracle,
+        bytes calldata signature
+    ) external;
+
+    /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from it, pay the remainder to
+    ///         `user` directly, and emit LeafRewarded
+    /// @dev Same authorization, deadline, payer binding, rewardId namespace, fee and `user` checks as rewardRoots, but
+    ///      signed over the distinct `RewardLeaf` typehash, so a RewardRoots signature cannot be used here and vice versa.
+    /// @param groupId The referral group
+    /// @param rewardId Oracle-chosen idempotency key / signature nonce (shared namespace with rewardRoots)
+    /// @param user Registered user to pay
+    /// @param token ERC20 to pull and forward
+    /// @param totalAmount Gross amount. Protocol fee (if any) is deducted first; `user` receives the remainder. Caller approves exactly `totalAmount`.
+    /// @param deadline Last timestamp (inclusive) at which the signature is valid
+    /// @param oracle Oracle that signed (EOA or ERC-1271 contract); must be authorized for `groupId`
+    /// @param signature ECDSA signature or ERC-1271 signature blob over the RewardLeaf digest
+    function rewardLeaf(
+        bytes32 groupId,
+        bytes32 rewardId,
         address user,
         address token,
         uint256 totalAmount,

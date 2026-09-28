@@ -201,9 +201,15 @@ contract MockReferralGraph is IReferralGraph {
         return bytes32(0);
     }
 
-    function SETTLE_TYPEHASH() external pure returns (bytes32) {
+    function REWARD_ROOTS_TYPEHASH() external pure returns (bytes32) {
         return bytes32(0);
     }
 
-    function settle(bytes32, bytes32, address, address, uint256, uint256, address, bytes calldata) external {}
+    function REWARD_LEAF_TYPEHASH() external pure returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function rewardRoots(bytes32, bytes32, address, address, uint256, uint256, address, bytes calldata) external {}
+
+    function rewardLeaf(bytes32, bytes32, address, address, uint256, uint256, address, bytes calldata) external {}
 }
