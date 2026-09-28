@@ -17,12 +17,14 @@ Registration is oracle-gated. Only an authorized oracle can call `register` or `
 
 Referral edges are append-only. Once a user is registered in a group, their referrer cannot be changed by the current contract.
 
-**Payouts go through `ReferralGraph.settle`.** Each settlement needs an EIP-712 signature from an oracle authorized for the group, bound to the payer (`msg.sender`), amount, token, trigger user, `settlementId`, and a deadline. There is no `tx.origin` authorization, so a contract the oracle key happens to call cannot settle on its behalf. The fee is pulled from `msg.sender`. Typical flow:
+**Payouts go through `ReferralGraph.rewardRoots` (pay the referral chain) or `rewardLeaf` (pay one user directly).** Each reward needs an EIP-712 signature from an oracle authorized for the group, bound to the function (distinct `RewardRoots` / `RewardLeaf` type names), payer (`msg.sender`), amount, token, user, `rewardId`, and a deadline. There is no `tx.origin` authorization, so a contract the oracle key happens to call cannot reward on its behalf. Funds are pulled from `msg.sender`. Typical flow:
 
-1. Oracle signs `Settle{groupId, settlementId, user, token, totalAmount, payer, deadline}`.
-2. Payer (app) approves the graph for the exact referral fee.
-3. Payer calls `settle(groupId, settlementId, user, token, totalAmount, deadline, oracle, signature)`. A 65/64-byte signature is first checked with `ecrecover` against `oracle` (EOAs, including EIP-7702-delegated EOAs); otherwise contract oracles (e.g. a Safe) are checked with ERC-1271. Authorizing a contract oracle delegates settle authority to that contract's signature logic.
-4. The graph resolves the payout chain, deducts any protocol fee from `totalAmount`, splits the remainder, pulls the tokens from the caller, pays recipients, and emits `ReferralSettlement` (its `distributedAmount` is net of the fee; `distributedAmount + ProtocolFeeCharged.amount == totalAmount`). The same `settlementId` cannot be reused for that group. A global protocol fee (default 0) is taken from the settle total when the owner has set `feeBps`.
+1. Oracle signs `RewardRoots{groupId, rewardId, user, token, totalAmount, payer, deadline}` (or `RewardLeaf{...}`).
+2. Payer (app) approves the graph for exactly `totalAmount`.
+3. Payer calls `rewardRoots(groupId, rewardId, user, token, totalAmount, deadline, oracle, signature)` (or `rewardLeaf(...)`). A 65/64-byte signature is first checked with `ecrecover` against `oracle` (EOAs, including EIP-7702-delegated EOAs); otherwise contract oracles (e.g. a Safe) are checked with ERC-1271. Authorizing a contract oracle delegates reward authority to that contract's signature logic.
+4. The graph deducts any protocol fee from `totalAmount`, then either resolves the payout chain and splits the remainder (`rewardRoots`, emits `RootsRewarded`) or pays the remainder to `user` (`rewardLeaf`, emits `LeafRewarded`). In both events `distributedAmount` is net of the fee; `distributedAmount + ProtocolFeeCharged.amount == totalAmount`. A `rewardId` can be used once per group across both functions. A global protocol fee (default 0) applies when the owner has set `feeBps`.
+
+`rewardLeaf` does not consult the skiplist: a skiplisted but registered user can still be paid if an oracle explicitly signs a `RewardLeaf` for them. Skiplisting only affects chain resolution in `rewardRoots`.
 
 ## Payout Incentives
 
