@@ -184,4 +184,32 @@ contract MockReferralGraph is IReferralGraph {
     function getAuthorizedOracles(bytes32 groupId) external view returns (address[] memory) {
         return _authorizedOraclesList[groupId];
     }
+
+    function setRewardCalculator(address) external {}
+
+    function feeBps() external pure returns (uint16) {
+        return 0;
+    }
+
+    function feeRecipient() external pure returns (address) {
+        return address(0);
+    }
+
+    function setProtocolFee(uint16, address) external {}
+
+    function DOMAIN_SEPARATOR() external pure returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function REWARD_ROOTS_TYPEHASH() external pure returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function REWARD_LEAF_TYPEHASH() external pure returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function rewardRoots(bytes32, bytes32, address, address, uint256, uint256, address, bytes calldata) external {}
+
+    function rewardLeaf(bytes32, bytes32, address, address, uint256, uint256, address, bytes calldata) external {}
 }
