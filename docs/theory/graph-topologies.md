@@ -10,7 +10,7 @@
 **System recap** (verify against the [main README](../../README.md)):
 
 - `ReferralGraph` stores per-`groupId` referral trees, oracle-gated registration, skiplist management, and EIP-712-signed `rewardRoots` / `rewardLeaf` payouts.
-- `RewardCalculator` splits rewards using **geometric 0.6 decay**, capped at **10 recipients**, with the **remainder going to the seed/root** (index 0).
+- `RewardCalculator` splits rewards using **geometric 0.6 decay**, capped at **10 recipients**. Integer division remainder (a few wei) goes to position 0 for exact-sum accounting (`RewardCalculator.sol` lines 46–51).
 - The integrating app owns transfers; settlement happens in the same transaction; tokens are pulled from `msg.sender`.
 - A protocol fee (default 0) is deducted from `totalAmount` before the split.
 
@@ -22,32 +22,44 @@
 
 ## Payout mechanics reference
 
-For a chain of length `n` (1 ≤ n ≤ 10), each level `k` (0-indexed, 0 = seed) receives:
+**How `rewardRoots(user, ...)` works** (`ReferralGraph.sol` lines 370–410):
+1. Build payout chain via `getPayoutChain(user, groupId, 10)` — returns `[user, user's_referrer, referrer's_referrer, ...]`, stopping at `REFERRAL_ROOT` or when length reaches 10 (lines 180–204).
+2. `REFERRAL_ROOT` is **never paid** — excluded from the chain (line 194).
+3. Pass chain to `RewardCalculator.calculateRewards(distributedAmount, chain.length)`.
+
+**Position mapping:**
+- Position 0 = the **trigger user** (`user` param)
+- Position 1 = trigger user's direct referrer
+- Position 2 = referrer's referrer
+- ...up to position 9
+
+For a chain of length `n` (1 ≤ n ≤ 10), each position `k` receives (`RewardCalculator.sol` lines 33–44):
 
 ```
-share(k, n) = 0.6^k / Σ_{j=0}^{n-1} 0.6^j
+share(k, n) = weights[k] / cumSums[n]
+where weights = [10000, 6000, 3600, 2160, 1296, 777, 466, 279, 167, 100]
 ```
 
 At the 10-recipient cap:
 
-| Level | Share |
-|-------|------:|
-| 0 (seed) | 40.25% |
-| 1 | 24.15% |
-| 2 | 14.49% |
-| 3 | 8.69% |
-| 4 | 5.22% |
-| 5 | 3.13% |
-| 6 | 1.88% |
-| 7 | 1.12% |
-| 8 | 0.67% |
-| 9 | 0.40% |
+| Position | Who | Share |
+|----------|-----|------:|
+| 0 | trigger user | 40.25% |
+| 1 | direct referrer | 24.15% |
+| 2 | ancestor 2 | 14.49% |
+| 3 | ancestor 3 | 8.69% |
+| 4 | ancestor 4 | 5.22% |
+| 5 | ancestor 5 | 3.13% |
+| 6 | ancestor 6 | 1.88% |
+| 7 | ancestor 7 | 1.12% |
+| 8 | ancestor 8 | 0.67% |
+| 9 | ancestor 9 | 0.40% |
 
-Key attacker incentives:
-1. **Control the seed** (level 0) to capture ~40% of every payout.
-2. **Control the first few levels** to capture ~65–80% cumulatively.
-3. **Stuff chains to exactly 10** to maximize the number of colluding levels paid.
-4. **Place Sybils near the depth cap** so legitimate users push payouts to colluders.
+**Key attacker incentives:**
+1. **Position Sybils as ancestors** of honest users — when honest users trigger rewards, Sybil ancestors capture ~60% (positions 1–9).
+2. **Stuff chains to depth 10** to maximize number of paid Sybil positions.
+3. **Control who triggers rewards** (oracle compromise) — if attacker triggers for their own Sybil, they capture 100%.
+4. **Park near depth cap** — even positions 8–9 earn ~1% at scale.
 
 ---
 
@@ -72,12 +84,15 @@ R ─► A ─► B ─► C ─► D ─► E ─► F ─► G ─► H ─►
 ```
 
 **Why dangerous:**  
-An attacker creates a chain of Sybil wallets to capture all 10 payout slots. If the attacker controls A–J, every payout triggered by any downstream user pays 100% to the attacker's wallets. Under 0.6^k decay, the attacker captures the entire budget because there are no honest ancestors to compete.
+An attacker creates a chain of Sybil wallets to capture positions 1–9 of the payout chain. When an honest user at the bottom triggers a reward, the attacker captures ~60% while the honest user keeps ~40%.
 
-**Quantified example:**  
-If the attacker creates 9 Sybils (B–J) under their primary wallet A, and a legitimate user K registers under J:
-- Any `rewardRoots(K, …)` pays: A (40.25%), B (24.15%), …, J (0.40%).
-- Total to attacker: 100%.
+**Quantified example** (from `RewardCalculator.sol` weights):  
+If the attacker creates 9 Sybils (B–J) under primary wallet A, and legitimate user K registers under J:
+- `rewardRoots(K, …)` produces chain `[K, J, I, H, G, F, E, D, C, B]` (A is at position 10, excluded by depth cap).
+- K (honest, position 0): **40.25%**
+- J–B (attacker, positions 1–9): **59.75%** combined
+
+The attacker does NOT get 100% — the honest trigger user always retains position 0. However, ~60% extraction per honest payout is still highly profitable at scale.
 
 **Detection signals:**
 - **Path length / depth** without branching: `max_depth(node)` where `fanout(ancestor) == 1`.
@@ -108,12 +123,15 @@ R ─► A ─► B ─► C ─► D ─► E       R ─► A ─► B ─► 
 ```
 
 **Why dangerous:**  
-The spine captures geometric decay rewards from all legs/leaves. A single attacker controlling the spine monetizes every leaf registration without contributing to recruitment quality. The caterpillar looks "bushy" superficially (many nodes) but concentrates value at the root/spine.
+The spine captures geometric decay rewards from all legs/leaves. A single attacker controlling the spine monetizes every leaf registration without contributing to recruitment quality. The caterpillar looks "bushy" superficially (many nodes) but concentrates value at the spine.
 
-**Quantified example (broom):**  
-If attacker controls R–D (5 nodes, depth 4) and 100 leaves register under D:
-- Each leaf reward pays D (43.4%), C (26%), B (15.6%), A (9.4%), R (5.6%).
-- Attacker captures 100% of 100 leaf payouts.
+**Quantified example (broom)** (from `RewardCalculator.sol`):  
+If attacker controls R, A, B, C, D (5 spine nodes) and 100 honest leaves register under D:
+- `rewardRoots(leaf, …)` produces chain `[leaf, D, C, B, A, R]` (n=6).
+- leaf (honest, position 0): **41.96%**
+- D–R (attacker, positions 1–5): **58.04%** combined
+
+The attacker captures ~58% of every leaf payout, not 100%. The honest leaf always retains position 0.
 
 **Detection signals:**
 - **Spine-to-leaf ratio**: `|spine| / |leaves|` where spine nodes have exactly 1 child except terminal.
@@ -142,7 +160,9 @@ R ─► A ─┼► C3
 ```
 
 **Why dangerous:**  
-Under 0.6^k, node A captures 62.5% of every payout triggered by its children (2-level chain), R captures 37.5%. If A is a Sybil farmer, a small set of wallets extracts most referral value. Even if A is honest, concentration creates single points of failure for network health and regulatory optics.
+When a child triggers a reward, the payout chain is `[child, A]` or `[child, A, R]`. For n=2: child gets 62.5% (position 0), A gets 37.5% (position 1). For n=3: child gets 51%, A gets 30.6%, R gets 18.4%.
+
+A mega-recruiter at position 1 collects ~31–38% of every payout triggered by their direct children. If A is a Sybil farmer controlling many fake children who trigger rewards, A extracts significant value. Even if A is honest, concentration creates single points of failure for network health and regulatory optics.
 
 **Detection signals:**
 - **Out-degree (children count)** exceeding percentile threshold (e.g., > 99th percentile for group).
@@ -265,7 +285,7 @@ R ─► ... (honest, depth 7) ─► S8 ─► S9 ─► S10 ─► (victim lea
 ```
 
 **Why dangerous:**  
-Under 0.6^k with 10-cap, levels 8–9 still receive ~1.8% combined. An attacker parked at these depths collects a small but reliable fraction of all downstream payouts. At scale (millions of events), this becomes significant.
+Under 0.6^k with 10-cap, positions 8–9 receive 0.67% + 0.40% = **1.07% combined** (`RewardCalculator.sol` weights). An attacker parked at these depths collects a small but reliable fraction of all downstream payouts. At scale (millions of events), this becomes significant — 1% of $10M volume is $100K.
 
 **Detection signals:**
 - **Depth concentration**: disproportionate node count at depths 8–10.
@@ -357,23 +377,34 @@ Wash trading inflates payout volume metrics without real economic activity. It c
 
 ---
 
-### 11. Seed / root remainder capture
+### 11. Early tree position advantage (NOT "root remainder capture")
+
+**Clarification on "remainder":**  
+The `RewardCalculator.sol` remainder (lines 46–51) is **rounding dust** (typically 0–9 wei), not ~40%. The 40% at position 0 is the geometric weight, received by the **trigger user** (`user` param to `rewardRoots`), not by some "root" node. `REFERRAL_ROOT` is excluded from payouts (`ReferralGraph.sol` line 194).
 
 **Definition:**  
-Since the geometric split sends the **remainder to index 0** (seed), an attacker controlling the seed extracts rounding benefits and the largest share on every payout.
+Early registrants (those closer to `REFERRAL_ROOT` in the tree) appear at higher positions (1, 2, 3...) in the payout chains of many downstream users. Over time, they accumulate more rewards than late joiners.
 
-**Why dangerous:**  
-Early tree position is immutable in ReferralGraph. If an attacker becomes the root or near-root through registration manipulation or oracle compromise, they perpetually capture ~40% of all downstream rewards.
+**Risk assessment: LOW to MODERATE**  
+This is **by design** — early adopters who help grow the network receive ongoing rewards. The risk arises only if:
+1. The first registrants are Sybils or colluders who game initial onboarding.
+2. Oracle is compromised at tree initialization, inserting attacker wallets as early ancestors.
+
+**Quantified impact:**  
+A node at position 1 for 1000 downstream users, each triggering one 1000-token reward:
+- Position 1 share (n=10): 24.15%
+- Total captured: 241,500 tokens across all payouts
 
 **Detection signals:**
-- **Payout Gini coefficient**: top 1% of nodes capture > 50% of total paid.
-- **Root wallet age / activity**: suspicious if new wallet with no prior history.
-- **Oracle audit trail**: verify legitimate first registration.
+- **Payout Gini coefficient**: top 1% capturing > 60% of total distributed.
+- **First-registrant wallet analysis**: verify legitimate onboarding, not oracle self-dealing.
+- **Time-to-first-reward**: early registrants with immediate high payouts are suspicious.
 
-**Action:** **Audit oracle controls**; consider re-registration or group migration if root compromised.
+**Action:** **Highlight** for monitoring; **audit oracle controls** during group initialization. This is not blockable without redesigning the geometric mechanism itself.
 
 **Literature:**
 - Pickard et al. (2011) on recursive incentive mechanisms and early-mover advantage [[14]](#ref-pickard)
+- Emek et al. (2011) on geometric mechanism properties [[2]](#ref-emek)
 
 ---
 
@@ -443,19 +474,27 @@ Healthy example:
 | Cross-funding density | < 0.1 | > 0.5 |
 | Top-10% payout share | < 50% | > 80% |
 
-### Generation payout histogram (healthy)
+### Per-payout share by chain length
 
-For a balanced tree with depth 5 and branching factor 3:
+Each `rewardRoots` call pays exactly one chain. Share depends on chain length:
 
-| Level | Nodes | Expected payout share (each) |
-|-------|-------|------------------------------|
-| 0 | 1 | 43.4% × (1/1) = 43.4% |
-| 1 | 3 | 26.0% × (1/3) = 8.7% each |
-| 2 | 9 | 15.6% × (1/9) = 1.7% each |
-| 3 | 27 | 9.4% × (1/27) = 0.35% each |
-| 4 | 81 | 5.6% × (1/81) = 0.07% each |
+| Chain length | Position 0 (trigger) | Position 1 (referrer) | Position 2+ |
+|--------------|---------------------|----------------------|-------------|
+| 1 | 100% | — | — |
+| 2 | 62.5% | 37.5% | — |
+| 3 | 51.0% | 30.6% | 18.4% |
+| 5 | 43.4% | 26.0% | 15.6%, 9.4%, 5.6% |
+| 10 | 40.25% | 24.15% | 14.49%, 8.69%, ... 0.40% |
 
-The distribution fans out: many nodes receive small amounts, few receive large amounts. A *healthy* Gini for such a tree is ~0.4–0.5.
+### Aggregate distribution in a healthy tree
+
+For a balanced tree with depth 5 and branching factor 3 (121 nodes), if each leaf triggers one reward:
+- 81 payouts (from leaves at depth 4)
+- Each payout goes to one chain of ≤5 nodes
+- Early ancestors (near root) appear in many chains, accumulating share
+- Expected Gini for cumulative payouts: ~0.4–0.6
+
+The distribution fans out: many nodes receive small amounts (leaves), few receive larger cumulative amounts (early ancestors).
 
 ---
 
@@ -473,7 +512,7 @@ The distribution fans out: many nodes receive small amounts, few receive large a
 | 8 | Identity-level cycles | Funding graph cycles | Cross-group inversion | Flag; skiplist if confirmed |
 | 9 | Lockstep temporal patterns | Action time clustering | Inter-event regularity | Flag; quarantine |
 | 10 | Wash settlement | Token flow loops | Same funding source | Flag; exclude from metrics |
-| 11 | Root remainder capture | Payout Gini > 0.7 | Root wallet anomalies | Audit oracle; consider migration |
+| 11 | Early position advantage | Payout Gini > 0.6 | First-registrant anomalies | Highlight; audit oracle init (LOW risk) |
 | 12 | Pyramid optics | Depth/width ratio >> 1 | Low branching entropy | Highlight for compliance |
 
 ---
