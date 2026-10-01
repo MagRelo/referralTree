@@ -236,3 +236,8 @@ Start conservative and loosen controls only after real data supports it:
 The system is only as abuse-resistant as the integrating app’s registration and payout policy. The shared contracts prevent malformed tree edges and provide deterministic split math, but they do not prove that users are unique, that referrers are genuine, or that reward events are economically valid.
 
 The best near-term mitigation is to make the integrator conservative: register only attributable referrals, pay only valuable and deduplicated events, cap exposure aggressively, and delay or review payouts when Sybil signals appear. Contract changes can add useful backstops, but the main defense against fake accounts and fake referrers will be product-level verification plus payout discipline.
+
+## Related Documents
+
+- [Graph Topologies](theory/graph-topologies.md) — Catalog of dangerous/suspicious graph shapes for the off-chain indexer
+- [README](../README.md) — System overview and payout mechanics
