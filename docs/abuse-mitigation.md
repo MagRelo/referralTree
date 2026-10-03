@@ -10,7 +10,7 @@ The main design principle is that the contracts should enforce simple attributio
 
 The shared infrastructure has two pieces:
 
-- `ReferralGraph` stores the referral tree for each `groupId` and resolves skiplist-aware payout chains via `getPayoutChain`.
+- `ReferralGraph` stores the referral tree for each `groupId`. `rewardRoots` pays skiplist-aware ancestors above the trigger via `getPayoutAncestors`. `getPayoutChain` is the seed-inclusive view and is not what `rewardRoots` pays.
 - `RewardCalculator` splits a reward pool with geometric 0.6 decay (exact sum, capped at 10 recipients).
 
 Registration is oracle-gated. Only an authorized oracle can call `register` or `batchRegister`. The graph prevents zero-address users, zero-address referrers, direct self-referrals, duplicate registrations in the same group, and registration under a referrer that is not already in the group's tree. The first user in a group can be registered under `REFERRAL_ROOT`.
@@ -22,13 +22,13 @@ Referral edges are append-only. Once a user is registered in a group, their refe
 1. Oracle signs `RewardRoots{groupId, rewardId, user, token, totalAmount, payer, deadline}` (or `RewardLeaf{...}`).
 2. Payer (app) approves the graph for exactly `totalAmount`.
 3. Payer calls `rewardRoots(groupId, rewardId, user, token, totalAmount, deadline, oracle, signature)` (or `rewardLeaf(...)`). A 65/64-byte signature is first checked with `ecrecover` against `oracle` (EOAs, including EIP-7702-delegated EOAs); otherwise contract oracles (e.g. a Safe) are checked with ERC-1271. Authorizing a contract oracle delegates reward authority to that contract's signature logic.
-4. The graph deducts any protocol fee from `totalAmount`, then either resolves the payout chain and splits the remainder (`rewardRoots`, emits `RootsRewarded`) or pays the remainder to `user` (`rewardLeaf`, emits `LeafRewarded`). In both events `distributedAmount` is net of the fee; `distributedAmount + ProtocolFeeCharged.amount == totalAmount`. A `rewardId` can be used once per group across both functions. A global protocol fee (default 0) applies when the owner has set `feeBps`.
+4. The graph deducts any protocol fee from `totalAmount`, then either splits the remainder across ancestors above `user` (`rewardRoots`, emits `RootsRewarded`) or pays the remainder to `user` (`rewardLeaf`, emits `LeafRewarded`). `rewardRoots` does not pay `user`. In both events `distributedAmount` is net of the fee; `distributedAmount + ProtocolFeeCharged.amount == totalAmount`. A `rewardId` can be used once per group across both functions. A global protocol fee (default 0) applies when the owner has set `feeBps`.
 
-`rewardLeaf` does not consult the skiplist: a skiplisted but registered user can still be paid if an oracle explicitly signs a `RewardLeaf` for them. Skiplisting only affects chain resolution in `rewardRoots`.
+`rewardLeaf` does not consult the skiplist: a skiplisted but registered user can still be paid if an oracle explicitly signs a `RewardLeaf` for them. Skiplisting only drops addresses from the ancestor walk in `rewardRoots`. The trigger user is never in that walk.
 
 ## Payout Incentives
 
-For a short chain, the first recipient receives the largest share, and upstream referrers receive progressively smaller shares.
+For a short chain, the nearest non-skiplisted ancestor of the trigger receives the largest share, and referrers further above receive progressively smaller shares. The trigger user is not in this split.
 
 | Paid recipients | First recipient | Second | Third | Fourth | Fifth |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -93,9 +93,9 @@ This is primarily an integrator correctness issue.
 
 ### Unregistered First Recipient
 
-`getPayoutChain(seed, …)` starts with `seed` before walking referrers. An unregistered seed that is not skiplisted yields a one-address chain and can receive 100% of the pool if the app pays it.
+`rewardRoots` requires a registered trigger and pays ancestors above that user, so an unregistered address cannot be the seed of an on-chain roots payout.
 
-If referral payouts should only go to registered referrers, the integrating app must enforce that policy.
+`getPayoutChain(seed, …)` still starts with `seed` before walking referrers. An unregistered seed that is not skiplisted yields a one-address chain. An app that pays from that view directly, instead of calling `rewardRoots`, can send 100% of a pool to that seed.
 
 ### Oracle or Backend Compromise
 

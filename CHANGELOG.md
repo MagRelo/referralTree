@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking
+
+- `rewardRoots` pays skiplist-aware ancestors **above** the trigger user (`getPayoutAncestors`), not the trigger. `rewardLeaf` still pays that user. The same user passed to both functions is paid once. `rewardRoots` reverts with `EmptyPayoutChain` when the trigger has no payable ancestor.
+
 ## [2.0.0] - 2026-08-29
 
 New deploy. Live Base / Base Sepolia ReferralGraph contracts are not upgradeable and are left in place.

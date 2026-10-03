@@ -320,7 +320,7 @@ function getAncestors(address user, bytes32 groupId, uint256 maxLevels)
 // RootsRewarded / LeafRewarded .distributedAmount = totalAmount - fee; ProtocolFeeCharged.amount = fee (only if > 0).
 token.approve(address(referralGraph), totalAmount);
 // signature: abi.encodePacked(r, s, v) / 64-byte EIP-2098 from oracle's key (EOA or 7702 EOA), else an ERC-1271 blob.
-referralGraph.rewardRoots(groupId, rewardId, user, address(token), totalAmount, deadline, oracle, signature); // pay the chain
+referralGraph.rewardRoots(groupId, rewardId, user, address(token), totalAmount, deadline, oracle, signature); // pay ancestors above user
 referralGraph.rewardLeaf(groupId, rewardId, user, address(token), totalAmount, deadline, oracle, signature); // pay user only
 ```
 

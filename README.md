@@ -111,8 +111,10 @@ referralGraph.batchRegister(newUsers, user3, groupId);
 
 Two oracle-authorized payout calls:
 
-- **`rewardRoots`** pays `user`'s skiplist-aware payout chain (`user` and up to 9 ancestors) with the geometric split.
+- **`rewardRoots`** pays the skiplist-aware ancestors **above** `user` (up to 10) with the geometric split. `user` is not a recipient.
 - **`rewardLeaf`** pays `user` directly (no chain, no split).
+
+The same `user` passed to both functions (with distinct `rewardId`s) is paid once, by `rewardLeaf`. `rewardRoots` pays that user's ancestors once.
 
 Both are authorized by an EIP-712 signature from an oracle authorized for `groupId` (there is no `tx.origin` or caller whitelist). Anyone may submit the signature, but the signed `payer` must be the address that calls the function, because that is who the tokens are pulled from. An oracle rewarding for itself signs with `payer = oracle` and submits. The submitter passes the signing `oracle` address and the `signature` bytes. `register` still requires `msg.sender` itself to be the oracle.
 
@@ -126,7 +128,7 @@ RewardLeaf(bytes32 groupId,bytes32 rewardId,address user,address token,uint256 t
 ```
 
 - `rewardId` is the nonce, in **one namespace per group shared by both functions**: each id is used at most once per group, by either function, whoever submits it.
-- `user` must be registered in the group (non-zero, not `REFERRAL_ROOT`) for both functions. A skiplisted `user` is omitted from `rewardRoots`' chain but can still be paid by an explicitly signed `rewardLeaf`.
+- `user` must be registered in the group (non-zero, not `REFERRAL_ROOT`) for both functions. `rewardRoots` never pays `user`, skiplisted or not. A skiplisted address is omitted from the ancestor walk (no pay, no level consumed) and can still be paid by an explicitly signed `rewardLeaf`. `rewardRoots` reverts with `EmptyPayoutChain` when `user` has no payable ancestor (registered directly under `REFERRAL_ROOT`, or every ancestor skiplisted).
 - `deadline` is inclusive (`block.timestamp <= deadline`).
 - The signer's oracle authorization is checked at execution, so `unauthorizeOracle` invalidates that oracle's outstanding signatures.
 - `DOMAIN_SEPARATOR()` is cached for the deploy chain id and recomputed if the chain id changes (fork), as in solmate `ERC20.permit`. High-s signatures are not rejected (also as in solmate); since `rewardId` is consumed on first use, a malleated signature cannot replay a reward.
@@ -142,7 +144,7 @@ RewardLeaf(bytes32 groupId,bytes32 rewardId,address user,address token,uint256 t
 - **7702:** a delegated EOA's own key always remains valid via step 1; the delegate cannot revoke it.
 - **Not supported:** ERC-6492 (signatures from not-yet-deployed wallets) — a contract oracle must be deployed.
 
-The global protocol fee defaults to **0** and is hard-capped at `MAX_FEE_BPS` (1000 bps = 10%). It applies identically to both functions: `totalAmount * feeBps / 10000` is deducted from `totalAmount` and sent to `feeRecipient`; the remainder (`distributedAmount`) goes to the chain (`rewardRoots`) or to `user` (`rewardLeaf`). The caller pays exactly `totalAmount` (not an extra top-up). `distributedAmount + ProtocolFeeCharged.amount == totalAmount`.
+The global protocol fee defaults to **0** and is hard-capped at `MAX_FEE_BPS` (1000 bps = 10%). It applies identically to both functions: `totalAmount * feeBps / 10000` is deducted from `totalAmount` and sent to `feeRecipient`; the remainder (`distributedAmount`) goes to the ancestors above `user` (`rewardRoots`) or to `user` (`rewardLeaf`). The caller pays exactly `totalAmount` (not an extra top-up). `distributedAmount + ProtocolFeeCharged.amount == totalAmount`.
 
 ```solidity
 // Off-chain: oracle signs RewardRoots{...} or RewardLeaf{groupId, rewardId, user, token, totalAmount, payer, deadline}
@@ -154,7 +156,7 @@ graph.rewardRoots(groupId, rewardId, user, address(token), totalAmount, deadline
 graph.rewardLeaf(groupId, rewardId, user, address(token), totalAmount, deadline, oracle, signature);
 ```
 
-Skiplisted addresses are omitted from the `rewardRoots` payout chain (no pay, no level consumed). Approve the exact `totalAmount` for the call, not an unlimited allowance.
+Skiplisted addresses are omitted from the `rewardRoots` ancestor walk (no pay, no level consumed). The trigger user is omitted even when not skiplisted. Approve the exact `totalAmount` for the call, not an unlimited allowance.
 
 ### 3. Skip List
 
@@ -175,10 +177,10 @@ referralGraph.setSkiplisted(user2, groupId, false);
 ```solidity
 /// @param groupId Referral group
 /// @param rewardId Oracle-chosen idempotency key (e.g. keccak256(abi.encode(contestId))); unique per group across both events
-/// @param triggerUser Seed passed to getPayoutChain
+/// @param triggerUser Registered user the ancestor walk starts above (not a recipient)
 /// @param token ERC20 that was pulled and forwarded
 /// @param distributedAmount Net amount actually transferred to recipients (totalAmount minus protocol fee; not winner-pool, not gross contest)
-/// @param recipients Skiplist-aware payout chain, at most 10
+/// @param recipients Skiplist-aware ancestors above triggerUser, at most 10
 /// @param amounts Geometric split of distributedAmount, same order as recipients (sums to distributedAmount)
 event RootsRewarded(
     bytes32 indexed groupId,
@@ -271,8 +273,8 @@ referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
 - `setSkiplisted(address user, bytes32 groupId, bool skiplisted)` - Add/remove an address from the skip list (oracle-only for that group)
 - `isSkiplisted(address user, bytes32 groupId)` - Check if an address is skiplisted
 - `getSkiplisted(bytes32 groupId)` - Enumerate skiplisted addresses for a group
-- `getPayoutAncestors(address user, bytes32 groupId, uint256 maxLevels)` - Ancestors with skiplisted addresses omitted
-- `getPayoutChain(address user, bytes32 groupId, uint256 maxLevels)` - Seed + ancestors with skiplisted addresses omitted (used for rewards)
+- `getPayoutAncestors(address user, bytes32 groupId, uint256 maxLevels)` - Ancestors with skiplisted addresses omitted (used by `rewardRoots`)
+- `getPayoutChain(address user, bytes32 groupId, uint256 maxLevels)` - Seed + ancestors with skiplisted addresses omitted
 
 #### Oracle Management
 
@@ -287,7 +289,7 @@ referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
 - `registeredCount(bytes32 groupId)` - Successful registrations in the group (excludes `REFERRAL_ROOT`; never decrements)
 - `skiplistedCount(bytes32 groupId)` - Current skiplist length (no extra storage)
 - `setRewardCalculator(address calculator)` - Set the geometric splitter used by `rewardRoots` (owner only)
-- `rewardRoots(bytes32 groupId, bytes32 rewardId, address user, address token, uint256 totalAmount, uint256 deadline, address oracle, bytes signature)` - Verify `oracle`'s EIP-712 `RewardRoots` signature (ECDSA against `oracle` first, then ERC-1271 if `oracle` has code; `payer = msg.sender`), pull `totalAmount` from `msg.sender`, pay the payout chain, emit `RootsRewarded`
+- `rewardRoots(bytes32 groupId, bytes32 rewardId, address user, address token, uint256 totalAmount, uint256 deadline, address oracle, bytes signature)` - Verify `oracle`'s EIP-712 `RewardRoots` signature (ECDSA against `oracle` first, then ERC-1271 if `oracle` has code; `payer = msg.sender`), pull `totalAmount` from `msg.sender`, pay ancestors above `user`, emit `RootsRewarded`
 - `rewardLeaf(bytes32 groupId, bytes32 rewardId, address user, address token, uint256 totalAmount, uint256 deadline, address oracle, bytes signature)` - Same, with a `RewardLeaf` signature; pays `user` directly and emits `LeafRewarded`
 - `DOMAIN_SEPARATOR()` / `REWARD_ROOTS_TYPEHASH()` / `REWARD_LEAF_TYPEHASH()` - EIP-712 domain separator and typehashes for off-chain signers
 - `setProtocolFee(uint16 bps, address recipient)` - Global protocol fee in bps of `totalAmount`, deducted from `totalAmount` on `rewardRoots` / `rewardLeaf` (owner only; defaults to 0; capped at `MAX_FEE_BPS` = 1000, i.e. 10%)

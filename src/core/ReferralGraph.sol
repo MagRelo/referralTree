@@ -388,7 +388,9 @@ contract ReferralGraph is IReferralGraph, Owned, ReentrancyGuard {
         uint256 protocolFee = _protocolFee(totalAmount);
         uint256 distributedAmount = totalAmount - protocolFee;
 
-        address[] memory chain = this.getPayoutChain(user, groupId, MAX_PAYOUT_LEVELS);
+        // Start above `user`. rewardLeaf pays the trigger; this call pays ancestors only,
+        // so the same user passed to both functions is paid once.
+        address[] memory chain = this.getPayoutAncestors(user, groupId, MAX_PAYOUT_LEVELS);
         if (chain.length == 0) revert EmptyPayoutChain();
 
         uint256[] memory amounts = rewardCalculator.calculateRewards(distributedAmount, chain.length);

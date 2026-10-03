@@ -22,8 +22,9 @@ interface IReferralGraph {
     /// @notice Emitted when an address is removed from a group's skip list
     event AddressUnskiplisted(bytes32 indexed groupId, address indexed user);
 
-    /// @notice Emitted by rewardRoots after the payout chain has been paid
-    /// @dev topic0 is stable for indexers. Recipients are the skiplist-aware payout chain.
+    /// @notice Emitted by rewardRoots after the ancestors above `triggerUser` have been paid
+    /// @dev topic0 is stable for indexers. `recipients` are the skiplist-aware ancestors above `triggerUser`
+    ///      (the trigger is not paid here; `rewardLeaf` pays that user).
     ///      `distributedAmount` is the net amount split across `recipients` (sum of `amounts`), i.e. the gross
     ///      `totalAmount` minus the protocol fee. `distributedAmount + ProtocolFeeCharged.amount == totalAmount` (gross);
     ///      when no fee is charged there is no ProtocolFeeCharged event and `distributedAmount == totalAmount`.
@@ -99,7 +100,7 @@ interface IReferralGraph {
     /// @notice Error when the trigger user is not registered in the group
     error UserNotRegistered();
 
-    /// @notice Error when getPayoutChain returns no recipients
+    /// @notice Error when rewardRoots finds no payable ancestors above the trigger user
     error EmptyPayoutChain();
 
     /// @notice Error when this rewardId was already used for the group (by rewardRoots or rewardLeaf)
@@ -255,19 +256,20 @@ interface IReferralGraph {
     function REWARD_LEAF_TYPEHASH() external view returns (bytes32);
 
     /// @notice Pull `totalAmount` of `token` from the caller, take any protocol fee from it, split the remainder across
-    ///         `user`'s skiplist-aware payout chain, and emit RootsRewarded
+    ///         the skiplist-aware ancestors above `user`, and emit RootsRewarded
     /// @dev Authorization is an EIP-712 `RewardRoots` signature from `oracle`, which must be authorized for `groupId`
     ///      (checked at execution time, so unauthorizing an oracle invalidates its outstanding signatures). A 65- or
     ///      64-byte (EIP-2098) signature is first checked with ecrecover against `oracle` (EOAs, including
     ///      EIP-7702-delegated EOAs); if that does not match and `oracle` has code, ERC-1271 `isValidSignature` is used
     ///      (no ERC-6492). Anyone may submit, but the signed `payer` must equal `msg.sender`; all tokens are pulled from
     ///      `msg.sender`. `rewardId` is the nonce, shared with rewardLeaf: each id is used at most once per group.
-    ///      `user` must be registered in the group. Does not retain a token balance.
+    ///      `user` must be registered in the group and is not a recipient. Does not retain a token balance.
+    ///      Reverts with EmptyPayoutChain when no non-skiplisted ancestor exists above `user`.
     /// @param groupId The referral group
     /// @param rewardId Oracle-chosen idempotency key / signature nonce
-    /// @param user Registered seed passed to getPayoutChain
+    /// @param user Registered trigger user. Ancestors above this user are paid; this user is not
     /// @param token ERC20 to pull and forward
-    /// @param totalAmount Gross amount. Protocol fee (if any) is deducted first; the remainder is split across the referral chain. Caller approves exactly `totalAmount`.
+    /// @param totalAmount Gross amount. Protocol fee (if any) is deducted first; the remainder is split across ancestors above `user`. Caller approves exactly `totalAmount`.
     /// @param deadline Last timestamp (inclusive) at which the signature is valid
     /// @param oracle Oracle that signed (EOA or ERC-1271 contract); must be authorized for `groupId`
     /// @param signature ECDSA signature or ERC-1271 signature blob over the RewardRoots digest

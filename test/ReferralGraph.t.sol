@@ -821,7 +821,7 @@ contract ReferralGraphTest is Test {
         vm.prank(oracle);
         token.approve(address(referralGraph), total);
 
-        address[] memory chain = referralGraph.getPayoutChain(user3, testGroup, 10);
+        address[] memory chain = referralGraph.getPayoutAncestors(user3, testGroup, 10);
         uint256[] memory amounts = calculator.calculateRewards(total, chain.length);
         bytes32 rewardId = keccak256("contest-1");
 
@@ -831,13 +831,55 @@ contract ReferralGraphTest is Test {
         _rewardRootsSigned(oracle, testGroup, rewardId, user3, address(token), total);
 
         assertEq(token.balanceOf(oracle), 0);
+        assertEq(token.balanceOf(user3), 0);
         uint256 paid;
         for (uint256 i = 0; i < chain.length; i++) {
+            assertTrue(chain[i] != user3);
             assertEq(token.balanceOf(chain[i]), amounts[i]);
             paid += amounts[i];
         }
         assertEq(paid, total);
         assertEq(token.balanceOf(address(referralGraph)), 0);
+    }
+
+    /// @dev rewardLeaf pays the trigger; rewardRoots on the same user pays only ancestors.
+    function testRewardLeafAndRootsPayTriggerOnce() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+
+        vm.startPrank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        referralGraph.register(user3, user2, testGroup);
+        vm.stopPrank();
+
+        uint256 leafAmount = 400_000;
+        uint256 rootsAmount = 600_000;
+        token.mint(oracle, leafAmount + rootsAmount);
+        vm.prank(oracle);
+        token.approve(address(referralGraph), leafAmount + rootsAmount);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory leafSig =
+            _signLeaf(ORACLE_PK, testGroup, bytes32("leaf"), user3, address(token), leafAmount, oracle, deadline);
+        _submitLeaf(oracle, testGroup, bytes32("leaf"), user3, address(token), leafAmount, deadline, oracle, leafSig);
+        _rewardRootsSigned(oracle, testGroup, bytes32("roots"), user3, address(token), rootsAmount);
+
+        address[] memory ancestors = referralGraph.getPayoutAncestors(user3, testGroup, 10);
+        uint256[] memory amounts = calculator.calculateRewards(rootsAmount, ancestors.length);
+        assertEq(ancestors.length, 2);
+        assertEq(ancestors[0], user2);
+        assertEq(ancestors[1], user1);
+
+        assertEq(token.balanceOf(user3), leafAmount);
+        assertEq(token.balanceOf(user2), amounts[0]);
+        assertEq(token.balanceOf(user1), amounts[1]);
+        assertEq(token.balanceOf(user1) + token.balanceOf(user2) + token.balanceOf(user3), leafAmount + rootsAmount);
+        assertEq(token.balanceOf(oracle), 0);
     }
 
     function testRewardRootsRejectsNonOracleSigner() public {
@@ -869,17 +911,20 @@ contract ReferralGraphTest is Test {
         vm.prank(owner);
         referralGraph.setRewardCalculator(address(calculator));
         address referralRoot = referralGraph.REFERRAL_ROOT();
-        vm.prank(oracle);
+        vm.startPrank(oracle);
         referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        vm.stopPrank();
 
         token.mint(payer, total);
         vm.prank(payer);
         token.approve(address(referralGraph), total);
 
         assertFalse(referralGraph.isAuthorizedOracle(payer, testGroup));
-        _rewardRootsSigned(payer, testGroup, bytes32("relayed"), user1, address(token), total);
+        _rewardRootsSigned(payer, testGroup, bytes32("relayed"), user2, address(token), total);
 
         assertEq(token.balanceOf(payer), 0);
+        assertEq(token.balanceOf(user2), 0);
         assertEq(token.balanceOf(user1), total);
     }
 
@@ -898,25 +943,27 @@ contract ReferralGraphTest is Test {
         vm.prank(owner);
         referralGraph.setRewardCalculator(address(calculator));
         address referralRoot = referralGraph.REFERRAL_ROOT();
-        vm.prank(oracle);
+        vm.startPrank(oracle);
         referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        vm.stopPrank();
 
         token.mint(oracle, total * 2);
         vm.prank(oracle);
         token.approve(address(referralGraph), total * 2);
 
         uint256 deadline = block.timestamp + 1 hours;
-        Sig memory sig = _sign(ORACLE_PK, testGroup, bytes32("id"), user1, address(token), total, oracle, deadline);
-        _submit(oracle, testGroup, bytes32("id"), user1, address(token), total, deadline, sig);
+        Sig memory sig = _sign(ORACLE_PK, testGroup, bytes32("id"), user2, address(token), total, oracle, deadline);
+        _submit(oracle, testGroup, bytes32("id"), user2, address(token), total, deadline, sig);
 
         // Same signature replayed
         vm.expectRevert(IReferralGraph.RewardIdUsed.selector);
-        _submit(oracle, testGroup, bytes32("id"), user1, address(token), total, deadline, sig);
+        _submit(oracle, testGroup, bytes32("id"), user2, address(token), total, deadline, sig);
 
         // Fresh, valid signature for the same rewardId (different amount) is also rejected
-        Sig memory sig2 = _sign(ORACLE_PK, testGroup, bytes32("id"), user1, address(token), total - 1, oracle, deadline);
+        Sig memory sig2 = _sign(ORACLE_PK, testGroup, bytes32("id"), user2, address(token), total - 1, oracle, deadline);
         vm.expectRevert(IReferralGraph.RewardIdUsed.selector);
-        _submit(oracle, testGroup, bytes32("id"), user1, address(token), total - 1, deadline, sig2);
+        _submit(oracle, testGroup, bytes32("id"), user2, address(token), total - 1, deadline, sig2);
     }
 
     function testRewardRootsRejectsEmptyChain() public {
@@ -926,15 +973,23 @@ contract ReferralGraphTest is Test {
         vm.prank(owner);
         referralGraph.setRewardCalculator(address(calculator));
         address referralRoot = referralGraph.REFERRAL_ROOT();
-        vm.startPrank(oracle);
+        vm.prank(oracle);
         referralGraph.register(user1, referralRoot, testGroup);
-        referralGraph.setSkiplisted(user1, testGroup, true);
-        vm.stopPrank();
 
+        // Direct child of the root has nobody above them.
         uint256 deadline = block.timestamp + 1 hours;
         Sig memory sig = _sign(ORACLE_PK, testGroup, bytes32("id"), user1, address(token), 1000, oracle, deadline);
         vm.expectRevert(IReferralGraph.EmptyPayoutChain.selector);
         _submit(oracle, testGroup, bytes32("id"), user1, address(token), 1000, deadline, sig);
+
+        // An ancestor exists, but skiplisting them leaves nobody to pay.
+        vm.startPrank(oracle);
+        referralGraph.register(user2, user1, testGroup);
+        referralGraph.setSkiplisted(user1, testGroup, true);
+        vm.stopPrank();
+        Sig memory sig2 = _sign(ORACLE_PK, testGroup, bytes32("id2"), user2, address(token), 1000, oracle, deadline);
+        vm.expectRevert(IReferralGraph.EmptyPayoutChain.selector);
+        _submit(oracle, testGroup, bytes32("id2"), user2, address(token), 1000, deadline, sig2);
     }
 
     function testRewardRootsOmitsSkiplisted() public {
@@ -957,10 +1012,33 @@ contract ReferralGraphTest is Test {
         token.approve(address(referralGraph), total);
         _rewardRootsSigned(oracle, testGroup, bytes32("id"), user3, address(token), total);
 
+        assertEq(token.balanceOf(user3), 0);
         assertEq(token.balanceOf(user2), 0);
-        assertGt(token.balanceOf(user3), 0);
-        assertGt(token.balanceOf(user1), 0);
-        assertEq(token.balanceOf(user1) + token.balanceOf(user3), total);
+        assertEq(token.balanceOf(user1), total);
+    }
+
+    /// @dev Skiplisting the trigger does not put them back into the roots payout.
+    function testRewardRootsSkipsSkiplistedTrigger() public {
+        RewardCalculator calculator = new RewardCalculator();
+        MockERC20 token = new MockERC20("USD", "USD", 6);
+        address referralRoot = referralGraph.REFERRAL_ROOT();
+
+        vm.prank(owner);
+        referralGraph.setRewardCalculator(address(calculator));
+        vm.startPrank(oracle);
+        referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        referralGraph.setSkiplisted(user2, testGroup, true);
+        vm.stopPrank();
+
+        uint256 total = 10_000;
+        token.mint(oracle, total);
+        vm.prank(oracle);
+        token.approve(address(referralGraph), total);
+        _rewardRootsSigned(oracle, testGroup, bytes32("skip-trigger"), user2, address(token), total);
+
+        assertEq(token.balanceOf(user2), 0);
+        assertEq(token.balanceOf(user1), total);
     }
 
     function testOnlyOwnerCanSetProtocolFee() public {
@@ -1018,8 +1096,10 @@ contract ReferralGraphTest is Test {
         referralGraph.setProtocolFee(feeBps, feeTo);
 
         address referralRoot = referralGraph.REFERRAL_ROOT();
-        vm.prank(oracle);
+        vm.startPrank(oracle);
         referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        vm.stopPrank();
 
         // Caller pays exactly `total` — fee comes out of that pot, not an extra pull.
         token.mint(oracle, total);
@@ -1027,16 +1107,17 @@ contract ReferralGraphTest is Test {
         token.approve(address(referralGraph), total);
 
         bytes32 rewardId = keccak256("fee-1");
-        address[] memory chain = referralGraph.getPayoutChain(user1, testGroup, 10);
+        address[] memory chain = referralGraph.getPayoutAncestors(user2, testGroup, 10);
         uint256[] memory amounts = calculator.calculateRewards(distributable, chain.length);
 
         vm.expectEmit(true, true, true, true, address(referralGraph));
         emit IReferralGraph.ProtocolFeeCharged(testGroup, rewardId, address(token), feeTo, protocolFee);
         vm.expectEmit(true, true, true, true, address(referralGraph));
-        emit IReferralGraph.RootsRewarded(testGroup, rewardId, user1, address(token), distributable, chain, amounts);
+        emit IReferralGraph.RootsRewarded(testGroup, rewardId, user2, address(token), distributable, chain, amounts);
 
-        _rewardRootsSigned(oracle, testGroup, rewardId, user1, address(token), total);
+        _rewardRootsSigned(oracle, testGroup, rewardId, user2, address(token), total);
 
+        assertEq(token.balanceOf(user2), 0);
         assertEq(token.balanceOf(user1), distributable);
         assertEq(token.balanceOf(feeTo), protocolFee);
         assertEq(token.balanceOf(oracle), 0);
@@ -1054,16 +1135,19 @@ contract ReferralGraphTest is Test {
         referralGraph.setProtocolFee(1, feeTo);
 
         address referralRoot = referralGraph.REFERRAL_ROOT();
-        vm.prank(oracle);
+        vm.startPrank(oracle);
         referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        vm.stopPrank();
 
         uint256 total = 1;
         token.mint(oracle, total);
         vm.prank(oracle);
         token.approve(address(referralGraph), total);
 
-        _rewardRootsSigned(oracle, testGroup, bytes32("dust"), user1, address(token), total);
+        _rewardRootsSigned(oracle, testGroup, bytes32("dust"), user2, address(token), total);
 
+        assertEq(token.balanceOf(user2), 0);
         assertEq(token.balanceOf(user1), total);
         assertEq(token.balanceOf(feeTo), 0);
         assertEq(token.balanceOf(address(referralGraph)), 0);
@@ -1083,15 +1167,18 @@ contract ReferralGraphTest is Test {
         referralGraph.setProtocolFee(100, feeTo);
 
         address referralRoot = referralGraph.REFERRAL_ROOT();
-        vm.prank(oracle);
+        vm.startPrank(oracle);
         referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        vm.stopPrank();
 
         token.mint(oracle, total);
         vm.prank(oracle);
         token.approve(address(referralGraph), total);
 
-        _rewardRootsSigned(oracle, testGroup, bytes32("id"), user1, address(token), total);
+        _rewardRootsSigned(oracle, testGroup, bytes32("id"), user2, address(token), total);
 
+        assertEq(token.balanceOf(user2), 0);
         assertEq(token.balanceOf(user1), distributable);
         assertEq(token.balanceOf(feeTo), protocolFee);
         assertEq(token.balanceOf(oracle), 0);
@@ -1109,17 +1196,19 @@ contract ReferralGraphTest is Test {
         referralGraph.setProtocolFee(100, feeTo);
 
         address referralRoot = referralGraph.REFERRAL_ROOT();
-        vm.prank(oracle);
+        vm.startPrank(oracle);
         referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        vm.stopPrank();
 
         token.mint(oracle, total);
         vm.prank(oracle);
         token.approve(address(referralGraph), total - 1);
 
         uint256 deadline = block.timestamp + 1 hours;
-        Sig memory sig = _sign(ORACLE_PK, testGroup, bytes32("id"), user1, address(token), total, oracle, deadline);
+        Sig memory sig = _sign(ORACLE_PK, testGroup, bytes32("id"), user2, address(token), total, oracle, deadline);
         vm.expectRevert("TRANSFER_FROM_FAILED");
-        _submit(oracle, testGroup, bytes32("id"), user1, address(token), total, deadline, sig);
+        _submit(oracle, testGroup, bytes32("id"), user2, address(token), total, deadline, sig);
     }
 
     function testRewardRootsUsesZeroFeeAfterFeeDisabled() public {
@@ -1134,16 +1223,19 @@ contract ReferralGraphTest is Test {
         referralGraph.setProtocolFee(0, address(0));
 
         address referralRoot = referralGraph.REFERRAL_ROOT();
-        vm.prank(oracle);
+        vm.startPrank(oracle);
         referralGraph.register(user1, referralRoot, testGroup);
+        referralGraph.register(user2, user1, testGroup);
+        vm.stopPrank();
 
         uint256 total = 1000;
         token.mint(oracle, total);
         vm.prank(oracle);
         token.approve(address(referralGraph), total);
 
-        _rewardRootsSigned(oracle, testGroup, bytes32("id"), user1, address(token), total);
+        _rewardRootsSigned(oracle, testGroup, bytes32("id"), user2, address(token), total);
 
+        assertEq(token.balanceOf(user2), 0);
         assertEq(token.balanceOf(user1), total);
         assertEq(token.balanceOf(address(9)), 0);
         assertEq(token.balanceOf(oracle), 0);
@@ -1388,7 +1480,8 @@ contract ReferralGraphTest is Test {
             payer, testGroup, bytes32("w"), user3, address(token), SIG_TOTAL, deadline, address(wallet), _packed(sig)
         );
         assertEq(token.balanceOf(payer), 0);
-        assertEq(token.balanceOf(user1) + token.balanceOf(user2) + token.balanceOf(user3), SIG_TOTAL);
+        assertEq(token.balanceOf(user3), 0);
+        assertEq(token.balanceOf(user1) + token.balanceOf(user2), SIG_TOTAL);
     }
 
     function testContractOracleMisbehaviourRevertsInvalidSigner() public {
