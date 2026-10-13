@@ -7,7 +7,7 @@
 ## Contracts
 
 - **ReferralGraph**: Attribution, skiplist, payout-chain resolution, and oracle-signed payouts (`rewardRoots`, `rewardLeaf`). Pulls the funds and forwards them in that call. Does not keep a balance.
-- **RewardCalculator**: Geometric split math (`0.6` decay, max 10, remainder to index 0). Does not hold funds.
+- **RewardCalculator**: Geometric split math (hard-coded BPS weights `floor(10000·0.6^k)`, max 10 recipients, renormalized to the actual recipient count, rounding dust to index 0). Does not hold funds.
 
 An authorized oracle signs an EIP-712 `RewardRoots` or `RewardLeaf` message; the payer (any address, e.g. your app's payout contract) submits it to `rewardRoots` (pay the referral chain) or `rewardLeaf` (pay one user). The graph pulls the funds from `msg.sender`, pays, and emits `RootsRewarded` / `LeafRewarded`. Incentive Exchange indexes those events (see [Indexing](#indexing-rootsrewarded-leafrewarded-protocolfeecharged)).
 
@@ -35,7 +35,7 @@ Referral Tree:           Reward Distribution (user = Carol):
    User5 (Dave)
 ```
 
-**The reward pool flows upward** from the seed user through the referral tree, with each level receiving a geometrically decreasing portion. Your app resolves the chain and amounts on-chain, then transfers tokens itself.
+**The reward pool flows upward** from the trigger user through the referral tree: `rewardRoots` pays the ancestors above the trigger (not the trigger), with each level receiving a geometrically decreasing portion. Your app resolves the chain and amounts on-chain, then transfers tokens itself.
 
 ### Exponential Network Growth
 
@@ -299,7 +299,7 @@ referralGraph.authorizeOracle(projectBOracle, projectBGroupId);
 
 ### RewardCalculator Functions
 
-- `calculateRewards(uint256 totalReward, uint256 numRecipients)` - Geometric 0.6 decay split; caps at 10 recipients; remainder goes to the first recipient so the array sums exactly to `totalReward`
+- `calculateRewards(uint256 totalReward, uint256 numRecipients)` - Geometric ~0.6 decay split (hard-coded BPS table `[10000, 6000, 3600, 2160, 1296, 777, 466, 279, 167, 100]`, normalized to `numRecipients`); caps at 10 recipients; remainder goes to the first recipient so the array sums exactly to `totalReward`
 
 ## Audits
 

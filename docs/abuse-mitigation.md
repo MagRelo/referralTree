@@ -36,7 +36,7 @@ For a short chain, the nearest non-skiplisted ancestor of the trigger receives t
 | 2 | 62.50% | 37.50% | - | - | - |
 | 3 | 51.02% | 30.61% | 18.37% | - | - |
 | 4 | 45.96% | 27.57% | 16.54% | 9.93% | - |
-| 5 | 43.40% | 26.00% | 15.60% | 9.36% | 5.62% |
+| 5 | 43.37% | 26.02% | 15.61% | 9.37% | 5.62% |
 
 At the 10-recipient cap, the approximate split is:
 
